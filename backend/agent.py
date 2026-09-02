@@ -5,10 +5,12 @@ from typing import Callable
 from pydantic import ValidationError
 
 from backend.bedrock import converse, get_client
+from backend.domain_utils import registrable_domain
 from backend.schema import EvidenceItem, Verdict
 from backend.tools.check_domain import check_domain
 from backend.tools.fetch_url import fetch_url
 from backend.tools.web_search import web_search
+from backend.trust_list import check_allowlist, is_trusted
 
 MAX_TURNS = 8
 ESCALATION_MODEL_ID = os.environ.get("BEDROCK_ESCALATION_MODEL_ID", "us.anthropic.claude-sonnet-4-5-v1:0")
@@ -27,10 +29,12 @@ sender is definitively malicious -- use probabilistic language ("signals suggest
 Typical investigation shape:
 1. If given a URL (or a message containing one), fetch it to see the final destination and \
    redirect chain, then check the registered domain's age.
-2. If the domain is unfamiliar, young, or the page content looks like a login/payment form for \
+2. Check the domain against the trusted-domains allowlist -- a match is strong evidence of
+   legitimacy, but a non-match just means "unknown, investigate further", not "bad".
+3. If the domain is unfamiliar, young, or the page content looks like a login/payment form for \
    a brand it doesn't seem to be, search the web for the domain or the sender/claim to see if \
    others have reported it as a scam, or to find the real official site to compare against.
-3. Stop once you have enough evidence for a confident verdict, or once further checks clearly \
+4. Stop once you have enough evidence for a confident verdict, or once further checks clearly \
    wouldn't change the answer -- don't burn turns checking things that won't matter.
 
 You MUST finish by calling the submit_verdict tool -- never answer in plain text. For each \
@@ -91,6 +95,23 @@ TOOL_CONFIG = {
         },
         {
             "toolSpec": {
+                "name": "check_allowlist",
+                "description": (
+                    "Check a domain against the team's curated trusted-domains list (well-known "
+                    "legitimate brands/institutions). A match is strong evidence of legitimacy; "
+                    "a non-match just means 'unknown', not 'bad' -- most real sites aren't on it."
+                ),
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {"domain": {"type": "string"}},
+                        "required": ["domain"],
+                    }
+                },
+            }
+        },
+        {
+            "toolSpec": {
                 "name": "submit_verdict",
                 "description": (
                     "Submit your final investigation verdict. Call this once you have enough "
@@ -141,6 +162,7 @@ TOOL_FUNCS: dict[str, Callable] = {
     "check_domain": check_domain,
     "fetch_url": fetch_url,
     "web_search": web_search,
+    "check_allowlist": check_allowlist,
 }
 
 
@@ -282,7 +304,35 @@ def _force_conclusion(client, messages: list[dict], steps: list[dict]) -> dict:
     }
 
 
+def _is_bare_url(text: str) -> bool:
+    """True when the whole input is a single URL/domain token rather than pasted message text --
+    only then is it safe to trust-list-bypass, since a longer message could still contain other
+    red flags even if it happens to mention/link a trusted brand."""
+    return bool(text) and " " not in text and "\n" not in text
+
+
 def run_investigation(user_input: str, on_step: Callable[[dict], None] | None = None) -> dict:
+    stripped = user_input.strip()
+    if _is_bare_url(stripped) and is_trusted(stripped):
+        domain = registrable_domain(stripped)
+        return {
+            "steps": [],
+            "verdict": Verdict(
+                verdict="likely_legitimate",
+                confidence="high",
+                evidence=[
+                    EvidenceItem(
+                        signal="trusted_allowlist",
+                        detail=f"{domain} is on the team's curated trusted-domains list",
+                        source_tool="check_allowlist",
+                    )
+                ],
+                explanation=f"{domain} is a pre-vetted, well-known domain, so no further investigation was needed.",
+                investigation_steps=0,
+            ).model_dump(),
+            "warnings": [],
+        }
+
     client = get_client()
     messages = [{"role": "user", "content": [{"text": user_input}]}]
     steps: list[dict] = []

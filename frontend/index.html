@@ -21,9 +21,9 @@
 </head>
 <body>
   <h1>PhishTrace</h1>
-  <p>Paste a suspicious email/message, or just a URL, and the agent will investigate.</p>
+  <p>Paste a suspicious email/message, or just a URL, and the agent will investigate. Type <code>-trust &lt;domain&gt;</code> to add a domain to the trusted list.</p>
 
-  <textarea id="input" placeholder="Paste text or a URL here..."></textarea>
+  <textarea id="input" placeholder="Paste text or a URL here, or type: -trust example.com"></textarea>
   <br />
   <button id="submit">Investigate</button>
   <div id="status"></div>
@@ -56,6 +56,11 @@ submitBtn.addEventListener("click", async () => {
     });
     if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
     const data = await resp.json();
+
+    if (data.command === "trust") {
+      statusEl.textContent = data.error || data.message;
+      return;
+    }
 
     stepsEl.innerHTML = data.steps
       .map(

@@ -36,12 +36,17 @@ class WebSearchResult(BaseModel):
     error: str | None = None
 
 
+class AllowlistCheckResult(BaseModel):
+    domain: str
+    trusted: bool
+
+
 class EvidenceItem(BaseModel):
     signal: str
     detail: str
     # which tool this evidence came from, or "reasoning" if it's inference rather than a
     # direct tool result -- lets us check the model isn't citing evidence nothing backs
-    source_tool: Literal["check_domain", "fetch_url", "web_search", "reasoning"] = "reasoning"
+    source_tool: Literal["check_domain", "fetch_url", "web_search", "check_allowlist", "reasoning"] = "reasoning"
 
 
 class Verdict(BaseModel):

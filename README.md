@@ -69,6 +69,7 @@ Pressure-test (per the hackathon's own framework): names a real user and moment 
 - **`check_domain`** — domain age is the single strongest cheap signal (freshly registered domains dominate phishing infrastructure). Free via RDAP (`rdap.org`), no API key.
 - **`fetch_url`** — follows the actual redirect chain (phishing links often hop through shorteners/redirectors) and pulls the landing page's cleaned text so Claude can read what it actually says.
 - **`web_search`** — the step a fixed classifier can't do: search for the domain/sender/claim to find scam reports, or find the real official site to compare against. Use Tavily (built for LLM agents, free tier, one API key) rather than scraping a search engine.
+- **`check_allowlist`** — checks a domain against a curated list of well-known legitimate brands/institutions (`data/trusted_domains.json`). A match is strong evidence; a non-match just means "unknown," not "bad." When the *entire* input is a single trusted domain, the agent skips the LLM loop entirely and returns an instant verdict — zero cost, zero latency for known-safe sites. Add to the list at runtime by submitting `-trust <domain>` instead of a normal investigation.
 - **`compare_brand`** *(stretch goal, cut first if time is short)* — screenshot the landing page and ask Claude (vision) whether it visually matches the brand it claims to be. Heavier dependency (headless browser); only add once the core loop is solid.
 
 ---
