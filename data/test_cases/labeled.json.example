@@ -1,0 +1,6 @@
+[
+  {"input": "https://www.wikipedia.org", "label": "legitimate"},
+  {"input": "https://www.google.com", "label": "legitimate"},
+  {"input": "https://www.nus.edu.sg", "label": "legitimate"},
+  {"input": "PASTE A FRESH PHISHTANK URL HERE", "label": "phishing"}
+]

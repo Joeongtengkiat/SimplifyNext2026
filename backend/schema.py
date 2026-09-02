@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -37,17 +39,14 @@ class WebSearchResult(BaseModel):
 class EvidenceItem(BaseModel):
     signal: str
     detail: str
-
-
-class InvestigationStep(BaseModel):
-    tool: str
-    input: dict
-    result: dict
+    # which tool this evidence came from, or "reasoning" if it's inference rather than a
+    # direct tool result -- lets us check the model isn't citing evidence nothing backs
+    source_tool: Literal["check_domain", "fetch_url", "web_search", "reasoning"] = "reasoning"
 
 
 class Verdict(BaseModel):
-    verdict: str  # likely_legitimate | suspicious | likely_phishing
-    confidence: str  # low | medium | high
+    verdict: Literal["likely_legitimate", "suspicious", "likely_phishing"]
+    confidence: Literal["low", "medium", "high"]
     evidence: list[EvidenceItem]
     explanation: str
     investigation_steps: int

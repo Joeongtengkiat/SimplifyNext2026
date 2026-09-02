@@ -1,21 +1,28 @@
+import json
+import os
 from typing import Callable
 
+from pydantic import ValidationError
+
 from backend.bedrock import converse, get_client
+from backend.schema import EvidenceItem, Verdict
 from backend.tools.check_domain import check_domain
 from backend.tools.fetch_url import fetch_url
 from backend.tools.web_search import web_search
 
 MAX_TURNS = 8
+ESCALATION_MODEL_ID = os.environ.get("BEDROCK_ESCALATION_MODEL_ID", "us.anthropic.claude-sonnet-4-5-v1:0")
 
 SYSTEM_PROMPT = """You are PhishTrace, an assistant that investigates whether an email, message, \
 or link is a phishing/scam attempt.
 
 You are given either raw message text or a URL. Investigate like a security analyst would:
 decide what to check, use the tools available, and read each result before deciding what to \
-check next. Do not call every tool by default — call what the evidence so far actually calls for.
+check next. Do not call every tool by default -- call what the evidence so far actually calls \
+for, and call independent tools in parallel in the same turn when that's faster.
 
 Ground truth: only claim something a tool result actually supports. Never assert a domain or \
-sender is definitively malicious — use probabilistic language ("signals suggest").
+sender is definitively malicious -- use probabilistic language ("signals suggest").
 
 Typical investigation shape:
 1. If given a URL (or a message containing one), fetch it to see the final destination and \
@@ -23,18 +30,13 @@ Typical investigation shape:
 2. If the domain is unfamiliar, young, or the page content looks like a login/payment form for \
    a brand it doesn't seem to be, search the web for the domain or the sender/claim to see if \
    others have reported it as a scam, or to find the real official site to compare against.
-3. Stop once you have enough evidence to give a confident verdict, or once further checks \
-   clearly wouldn't change the answer — don't burn turns checking things that won't matter.
+3. Stop once you have enough evidence for a confident verdict, or once further checks clearly \
+   wouldn't change the answer -- don't burn turns checking things that won't matter.
 
-When you are done investigating, respond with your final answer as plain text (no more tool \
-calls) in this shape:
-
-VERDICT: <likely_legitimate | suspicious | likely_phishing>
-CONFIDENCE: <low | medium | high>
-EVIDENCE:
-- <signal>: <one-line detail, grounded in an actual tool result>
-- <signal>: <one-line detail>
-EXPLANATION: <one paragraph, plain language, for a non-technical reader>
+You MUST finish by calling the submit_verdict tool -- never answer in plain text. For each \
+evidence item, set source_tool to whichever tool call it actually came from, or "reasoning" if \
+it's inference rather than a direct tool result. Only use "high" confidence when multiple \
+independent tool-sourced signals agree.
 """
 
 TOOL_CONFIG = {
@@ -87,6 +89,51 @@ TOOL_CONFIG = {
                 },
             }
         },
+        {
+            "toolSpec": {
+                "name": "submit_verdict",
+                "description": (
+                    "Submit your final investigation verdict. Call this once you have enough "
+                    "evidence to conclude. This is the only way to finish the investigation -- "
+                    "do not answer in plain text."
+                ),
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "verdict": {
+                                "type": "string",
+                                "enum": ["likely_legitimate", "suspicious", "likely_phishing"],
+                            },
+                            "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+                            "evidence": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "signal": {"type": "string", "description": "short label, e.g. domain_age"},
+                                        "detail": {
+                                            "type": "string",
+                                            "description": "one-line detail, grounded in a tool result",
+                                        },
+                                        "source_tool": {
+                                            "type": "string",
+                                            "enum": ["check_domain", "fetch_url", "web_search", "reasoning"],
+                                        },
+                                    },
+                                    "required": ["signal", "detail", "source_tool"],
+                                },
+                            },
+                            "explanation": {
+                                "type": "string",
+                                "description": "one paragraph, plain language, for a non-technical reader",
+                            },
+                        },
+                        "required": ["verdict", "confidence", "evidence", "explanation"],
+                    }
+                },
+            }
+        },
     ]
 }
 
@@ -97,43 +144,177 @@ TOOL_FUNCS: dict[str, Callable] = {
 }
 
 
+def _call_tool(tool_use: dict, on_step: Callable[[dict], None] | None) -> dict:
+    name, tool_input = tool_use["name"], tool_use["input"]
+    func = TOOL_FUNCS.get(name)
+    try:
+        result = func(**tool_input).model_dump() if func else {"error": f"unknown tool '{name}'"}
+    except Exception as e:  # a bad tool input or a network blip shouldn't kill the investigation
+        result = {"error": f"{type(e).__name__}: {e}"}
+
+    step = {"tool": name, "input": tool_input, "result": result}
+    if on_step:
+        on_step(step)
+    return step
+
+
+def _ground_evidence(raw_evidence: list[dict], steps: list[dict]) -> tuple[list[EvidenceItem], list[str]]:
+    called_tools = {s["tool"] for s in steps}
+    items, warnings = [], []
+    for raw in raw_evidence:
+        item = EvidenceItem(**raw)
+        if item.source_tool != "reasoning" and item.source_tool not in called_tools:
+            warnings.append(f"Evidence '{item.signal}' cites {item.source_tool}, which was never called this run")
+        items.append(item)
+    return items, warnings
+
+
+def _finalize(raw_input: dict, steps: list[dict]) -> dict:
+    warnings: list[str] = []
+    try:
+        evidence, ground_warnings = _ground_evidence(raw_input.get("evidence", []), steps)
+        warnings.extend(ground_warnings)
+
+        confidence = raw_input.get("confidence", "low")
+        if ground_warnings and confidence == "high":
+            confidence = "medium"
+            warnings.append("Confidence downgraded from high because some cited evidence was ungrounded")
+
+        verdict = Verdict(
+            verdict=raw_input["verdict"],
+            confidence=confidence,
+            evidence=evidence,
+            explanation=raw_input.get("explanation", ""),
+            investigation_steps=len(steps),
+        )
+    except (ValidationError, KeyError) as e:
+        warnings.append(f"submit_verdict output failed schema validation: {e}")
+        verdict = Verdict(
+            verdict="suspicious",
+            confidence="low",
+            evidence=[],
+            explanation="The agent's verdict could not be validated; treat with caution and review manually.",
+            investigation_steps=len(steps),
+        )
+
+    return {"steps": steps, "verdict": verdict.model_dump(), "warnings": warnings}
+
+
+def _escalate(client, steps: list[dict]) -> dict | None:
+    """Re-runs just the final judgment on Sonnet when Haiku's own verdict came back low-confidence,
+    reusing the evidence already gathered rather than re-investigating from scratch."""
+    evidence_summary = json.dumps(steps, indent=2)[:8000]
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "text": "A prior investigation gathered this evidence but was only low-confidence:\n\n"
+                    f"{evidence_summary}\n\nReview it and submit your own independent verdict."
+                }
+            ],
+        }
+    ]
+    try:
+        response = converse(
+            client,
+            messages,
+            SYSTEM_PROMPT,
+            TOOL_CONFIG,
+            tool_choice={"tool": {"name": "submit_verdict"}},
+            model_id=ESCALATION_MODEL_ID,
+        )
+    except Exception:
+        return None
+
+    for block in response["output"]["message"]["content"]:
+        if block.get("toolUse", {}).get("name") == "submit_verdict":
+            return block["toolUse"]["input"]
+    return None
+
+
+def _finalize_with_escalation(client, raw_input: dict, steps: list[dict]) -> dict:
+    outcome = _finalize(raw_input, steps)
+    if outcome["verdict"]["confidence"] != "low":
+        return outcome
+
+    escalated_input = _escalate(client, steps)
+    if not escalated_input:
+        return outcome
+
+    escalated_outcome = _finalize(escalated_input, steps)
+    escalated_outcome["warnings"].append("Escalated to Sonnet for a second opinion due to low confidence")
+    return escalated_outcome
+
+
+def _force_conclusion(client, messages: list[dict], steps: list[dict]) -> dict:
+    messages.append(
+        {
+            "role": "user",
+            "content": [
+                {
+                    "text": "You must conclude now. Call submit_verdict with your best assessment "
+                    "based on the evidence gathered so far."
+                }
+            ],
+        }
+    )
+    try:
+        response = converse(
+            client, messages, SYSTEM_PROMPT, TOOL_CONFIG, tool_choice={"tool": {"name": "submit_verdict"}}
+        )
+        for block in response["output"]["message"]["content"]:
+            if block.get("toolUse", {}).get("name") == "submit_verdict":
+                return _finalize_with_escalation(client, block["toolUse"]["input"], steps)
+    except Exception:
+        pass
+
+    return {
+        "steps": steps,
+        "verdict": Verdict(
+            verdict="suspicious",
+            confidence="low",
+            evidence=[],
+            explanation="Investigation ended without a validated verdict; review manually.",
+            investigation_steps=len(steps),
+        ).model_dump(),
+        "warnings": ["Forced conclusion failed; returning a default low-confidence verdict"],
+    }
+
+
 def run_investigation(user_input: str, on_step: Callable[[dict], None] | None = None) -> dict:
     client = get_client()
     messages = [{"role": "user", "content": [{"text": user_input}]}]
-    steps = []
+    steps: list[dict] = []
 
     for _ in range(MAX_TURNS):
         response = converse(client, messages, SYSTEM_PROMPT, TOOL_CONFIG)
         output_message = response["output"]["message"]
         messages.append(output_message)
 
-        if response["stopReason"] != "tool_use":
-            final_text = "".join(block.get("text", "") for block in output_message["content"] if "text" in block)
-            return {"steps": steps, "final_text": final_text}
-
+        submit_input = None
         tool_result_blocks = []
+
         for block in output_message["content"]:
-            if "toolUse" not in block:
+            tool_use = block.get("toolUse")
+            if not tool_use:
                 continue
-            tool_use = block["toolUse"]
-            name, tool_input = tool_use["name"], tool_use["input"]
-            func = TOOL_FUNCS.get(name)
+            if tool_use["name"] == "submit_verdict":
+                submit_input = tool_use["input"]
+                continue
 
-            result_dict = func(**tool_input).model_dump() if func else {"error": f"unknown tool {name}"}
-
-            step = {"tool": name, "input": tool_input, "result": result_dict}
+            step = _call_tool(tool_use, on_step)
             steps.append(step)
-            if on_step:
-                on_step(step)
-
             tool_result_blocks.append(
-                {"toolResult": {"toolUseId": tool_use["toolUseId"], "content": [{"json": result_dict}]}}
+                {"toolResult": {"toolUseId": tool_use["toolUseId"], "content": [{"json": step["result"]}]}}
             )
+
+        if submit_input is not None:
+            return _finalize_with_escalation(client, submit_input, steps)
+
+        if not tool_result_blocks:
+            break  # model answered without calling a tool at all -- force it to conclude properly
 
         messages.append({"role": "user", "content": tool_result_blocks})
 
-    return {
-        "steps": steps,
-        "final_text": "VERDICT: suspicious\nCONFIDENCE: low\nEXPLANATION: Investigation hit the step "
-        "limit before reaching a confident conclusion; treat with caution and review manually.",
-    }
+    return _force_conclusion(client, messages, steps)

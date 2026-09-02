@@ -1,14 +1,26 @@
 from datetime import datetime, timezone
 
 import requests
+import tldextract
 
 from backend.schema import DomainCheckResult
 
 RDAP_URL = "https://rdap.org/domain/{domain}"
 
 
+def _registrable_domain(raw: str) -> str:
+    """Resolves whatever the model passed (a bare domain, a subdomain, or a full URL with a
+    path) down to the actual registrable domain -- e.g. "secure.paypal-verify.tk/login" ->
+    "paypal-verify.tk". Looking up a subdomain or a URL-with-path against RDAP just fails, so
+    this can't be left to the model to get right."""
+    ext = tldextract.extract(raw)
+    if not ext.domain or not ext.suffix:
+        return raw.strip().lower().removeprefix("http://").removeprefix("https://").split("/")[0]
+    return f"{ext.domain}.{ext.suffix}"
+
+
 def check_domain(domain: str) -> DomainCheckResult:
-    domain = domain.strip().lower().removeprefix("www.")
+    domain = _registrable_domain(domain)
 
     try:
         resp = requests.get(

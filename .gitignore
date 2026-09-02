@@ -2,5 +2,7 @@
 __pycache__/
 *.pyc
 .env
+.vscode/
 data/usage_log.jsonl
-data/test_cases/phishing_samples.txt
+data/eval_report.json
+data/test_cases/labeled.json
