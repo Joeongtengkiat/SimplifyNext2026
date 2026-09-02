@@ -98,24 +98,35 @@ Pressure-test (per the hackathon's own framework): names a real user and moment 
 phishtrace/
 ├── README.md
 ├── requirements.txt
-├── .env.example              # AWS_ACCESS_KEY_ID / SECRET / SESSION_TOKEN / REGION / TAVILY_API_KEY
+├── .env.example              # AWS_ACCESS_KEY_ID / SECRET / SESSION_TOKEN / REGION / TAVILY_API_KEY / BEDROCK_MODEL_ID
 ├── backend/
-│   ├── main.py                # FastAPI app, /investigate endpoint, SSE stream of agent steps
-│   ├── bedrock.py              # boto3 client, Converse wrapper, retry, token accounting
-│   ├── agent.py                 # the tool-use loop: bounded iterations, stop condition
+│   ├── main.py                  # FastAPI app: /investigate, /health, the -trust command
+│   ├── bedrock.py                # boto3 client, Converse wrapper, retry, token-usage logging
+│   ├── agent.py                   # the tool-use loop: bounded iterations, submit_verdict tool,
+│   │                               # grounding checks, Sonnet escalation on low confidence
+│   ├── domain_utils.py             # shared registrable-domain resolution (RDAP + trust list need it)
+│   ├── trust_list.py                # curated allowlist: check_allowlist tool + -trust command backend
 │   ├── tools/
-│   │   ├── check_domain.py      # RDAP lookup -> registrar, age_days
-│   │   ├── fetch_url.py         # requests + redirect chain + BeautifulSoup text extraction
-│   │   ├── web_search.py        # Tavily search wrapper
-│   │   └── compare_brand.py     # stretch: screenshot + vision comparison
-│   ├── schema.py                # Pydantic models for tool I/O and the final verdict
-│   └── store.py                 # local run history (SQLite or JSON), optional
-├── frontend/
-│   └── index.html                # paste input, stream steps, show evidence + verdict
+│   │   ├── check_domain.py          # RDAP lookup -> registrar, age_days
+│   │   ├── fetch_url.py             # requests + redirect chain + BeautifulSoup text extraction
+│   │   └── web_search.py            # Tavily search wrapper
+│   └── schema.py                    # Pydantic models for tool I/O and the final verdict
+├── frontend/                    # standalone web page (same backend, no build step)
+│   ├── index.html
+│   ├── style.css
+│   └── app.js
+├── extension/                   # Chrome (Manifest V3) extension -- same backend
+│   ├── manifest.json
+│   ├── popup.html / popup.css / popup.js / app.js
+│   ├── background.js              # right-click "Investigate this link/page" -> notification
+│   └── icons/
 ├── data/
-│   └── test_cases/               # a handful of known-phishing and known-legit URLs/emails for eval
+│   ├── trusted_domains.json         # seed allowlist (committed)
+│   └── test_cases/                  # labeled.json.example -> copy to labeled.json (gitignored)
 └── scripts/
-    └── cost_report.py             # sum token usage -> running $ estimate
+    ├── cost_report.py               # sum token usage -> running $ estimate
+    ├── evaluate.py                  # score the agent against data/test_cases/labeled.json
+    └── gen_icons.py                 # regenerates extension/icons/*.png if the icon design changes
 ```
 
 ---
@@ -131,6 +142,11 @@ uvicorn backend.main:app --reload
 ```
 
 Paste fresh AWS keys from the access portal into `.env` — they expire every 12 hours.
+
+Then either open `frontend/index.html` directly in a browser, or load the extension:
+`chrome://extensions` → enable Developer mode → **Load unpacked** → select the `extension/`
+folder. The backend must be running locally either way (`host_permissions` in the manifest only
+allows the extension to talk to `http://localhost:8000`).
 
 `requirements.txt` baseline:
 

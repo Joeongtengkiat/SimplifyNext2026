@@ -3,87 +3,38 @@
 <head>
 <meta charset="utf-8" />
 <title>PhishTrace</title>
-<style>
-  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
-  textarea { width: 100%; min-height: 100px; font-family: inherit; font-size: 14px; padding: 8px; box-sizing: border-box; }
-  button { margin-top: 8px; padding: 8px 20px; font-size: 14px; cursor: pointer; }
-  #steps { margin-top: 20px; }
-  .step { border-left: 3px solid #999; padding: 8px 12px; margin-bottom: 8px; background: #f7f7f7; }
-  .step .tool { font-weight: 600; }
-  #verdict { margin-top: 20px; padding: 16px; border-radius: 6px; }
-  .likely_phishing { background: #fde2e2; border: 1px solid #e57373; }
-  .suspicious { background: #fff3cd; border: 1px solid #e0c068; }
-  .likely_legitimate { background: #e2f7e2; border: 1px solid #6fbf73; }
-  #verdict h2 { margin-top: 0; }
-  ul { padding-left: 20px; }
-  #status { color: #666; font-size: 13px; margin-top: 8px; }
-</style>
+<link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <h1>PhishTrace</h1>
-  <p>Paste a suspicious email/message, or just a URL, and the agent will investigate. Type <code>-trust &lt;domain&gt;</code> to add a domain to the trusted list.</p>
+<div class="container">
+  <header>
+    <img src="../extension/icons/icon48.png" alt="" />
+    <h1>PhishTrace</h1>
+  </header>
+  <p class="tagline">
+    Paste a suspicious email/message, or just a URL. Type <code>-trust &lt;domain&gt;</code> to
+    add a domain to the trusted list.
+  </p>
 
   <textarea id="input" placeholder="Paste text or a URL here, or type: -trust example.com"></textarea>
-  <br />
-  <button id="submit">Investigate</button>
-  <div id="status"></div>
+  <div class="actions">
+    <button id="submit">Investigate</button>
+    <span id="status"></span>
+  </div>
 
   <div id="steps"></div>
   <div id="verdict"></div>
+</div>
 
+<script src="app.js"></script>
 <script>
-const submitBtn = document.getElementById("submit");
-const input = document.getElementById("input");
-const stepsEl = document.getElementById("steps");
-const verdictEl = document.getElementById("verdict");
-const statusEl = document.getElementById("status");
-
-submitBtn.addEventListener("click", async () => {
-  const text = input.value.trim();
-  if (!text) return;
-
-  stepsEl.innerHTML = "";
-  verdictEl.innerHTML = "";
-  verdictEl.className = "";
-  statusEl.textContent = "Investigating...";
-  submitBtn.disabled = true;
-
-  try {
-    const resp = await fetch("http://localhost:8000/investigate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ input: text }),
-    });
-    if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
-    const data = await resp.json();
-
-    if (data.command === "trust") {
-      statusEl.textContent = data.error || data.message;
-      return;
-    }
-
-    stepsEl.innerHTML = data.steps
-      .map(
-        (s, i) =>
-          `<div class="step"><span class="tool">Step ${i + 1}: ${s.tool}</span><br/>${JSON.stringify(s.input)}</div>`
-      )
-      .join("");
-
-    const v = data.verdict;
-    verdictEl.className = v.verdict;
-    verdictEl.innerHTML = `
-      <h2>${v.verdict.replace(/_/g, " ")} (confidence: ${v.confidence})</h2>
-      <p>${v.explanation}</p>
-      <ul>${v.evidence.map((e) => `<li><b>${e.signal}:</b> ${e.detail}</li>`).join("")}</ul>
-      <p><i>${v.investigation_steps} investigation step(s) taken.</i></p>
-    `;
-    statusEl.textContent = "";
-  } catch (err) {
-    statusEl.textContent = `Error: ${err.message}`;
-  } finally {
-    submitBtn.disabled = false;
-  }
-});
+  wireUpForm({
+    inputEl: document.getElementById("input"),
+    submitEl: document.getElementById("submit"),
+    statusEl: document.getElementById("status"),
+    stepsEl: document.getElementById("steps"),
+    verdictEl: document.getElementById("verdict"),
+  });
 </script>
 </body>
 </html>
