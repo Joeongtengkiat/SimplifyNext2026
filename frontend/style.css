@@ -1,11 +1,12 @@
 :root {
-  --bg: #f5f6fa;
+  --bg: #eef0f6;
   --card: #ffffff;
   --border: #e4e7ee;
   --text: #1a1d29;
   --muted: #6b7280;
   --brand: #252f4f;
   --brand-light: #3b4b8a;
+  --brand-dark: #1a2140;
 
   --legit-bg: #ecfdf3;
   --legit-border: #bbf7d0;
@@ -29,12 +30,23 @@ body {
   background: var(--bg);
   color: var(--text);
   margin: 0;
-  padding: 24px;
+  padding: 0 0 40px;
 }
 
 .container {
   max-width: 640px;
   margin: 0 auto;
+  padding: 0 24px;
+}
+
+.banner {
+  background: linear-gradient(135deg, var(--brand) 0%, var(--brand-dark) 100%);
+  padding: 22px 0 26px;
+  margin-bottom: 22px;
+}
+
+.banner .container {
+  padding: 0 24px;
 }
 
 header {
@@ -45,27 +57,37 @@ header {
 }
 
 header img {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
 }
 
 header h1 {
-  font-size: 19px;
+  font-size: 20px;
   margin: 0;
-  color: var(--brand);
+  color: white;
+  letter-spacing: -0.01em;
 }
 
 .tagline {
-  color: var(--muted);
-  font-size: 13px;
-  margin: 0 0 18px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12.5px;
+  margin: 6px 0 0;
 }
 
 .tagline code {
-  background: var(--border);
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
   border-radius: 4px;
   padding: 1px 5px;
-  font-size: 12px;
+  font-size: 11.5px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
 }
 
 textarea {
@@ -102,11 +124,15 @@ button {
   font-size: 13.5px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, transform 0.1s;
 }
 
 button:hover:not(:disabled) {
   background: var(--brand-light);
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 button:disabled {
@@ -132,6 +158,17 @@ button:disabled {
   }
 }
 
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 #status {
   color: var(--muted);
   font-size: 12.5px;
@@ -145,27 +182,31 @@ button:disabled {
   margin-top: 18px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  position: relative;
 }
 
 .step {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 12px;
   font-size: 12.5px;
+  margin-bottom: 6px;
+  animation: fade-in 0.25s ease-out;
 }
 
 .step .icon {
   font-size: 15px;
+  flex-shrink: 0;
 }
 
 .step .tool-name {
   font-weight: 600;
   color: var(--brand);
+  flex-shrink: 0;
 }
 
 .step .tool-input {
@@ -180,10 +221,12 @@ button:disabled {
 }
 
 .verdict-card {
-  border-radius: 12px;
+  border-radius: 14px;
   border: 1px solid var(--border);
-  padding: 18px 20px;
+  padding: 20px 22px;
   background: var(--card);
+  box-shadow: 0 2px 10px rgba(16, 24, 40, 0.06);
+  animation: fade-in 0.3s ease-out;
 }
 
 .verdict-card.likely_legitimate {
@@ -206,11 +249,11 @@ button:disabled {
 }
 
 .verdict-head .verdict-icon {
-  font-size: 22px;
+  font-size: 24px;
 }
 
 .verdict-title {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
   text-transform: capitalize;
 }
@@ -237,9 +280,9 @@ button:disabled {
 }
 
 .explanation {
-  margin: 12px 0;
+  margin: 14px 0;
   font-size: 13.5px;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .evidence-list {
@@ -252,9 +295,9 @@ button:disabled {
 }
 
 .evidence-list li {
-  background: rgba(255, 255, 255, 0.6);
-  border-radius: 6px;
-  padding: 7px 10px;
+  background: rgba(255, 255, 255, 0.65);
+  border-radius: 7px;
+  padding: 8px 11px;
   font-size: 12.5px;
 }
 
@@ -268,8 +311,44 @@ button:disabled {
   color: var(--muted);
 }
 
+.verdict-footer {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .meta {
-  margin-top: 10px;
   font-size: 11.5px;
   color: var(--muted);
+}
+
+.trust-btn {
+  background: transparent;
+  color: var(--brand);
+  border: 1px solid var(--brand);
+  padding: 6px 14px;
+  font-size: 12px;
+  border-radius: 999px;
+}
+
+.trust-btn:hover:not(:disabled) {
+  background: var(--brand);
+  color: white;
+}
+
+.trust-btn.trusted {
+  border-color: var(--legit-text);
+  color: var(--legit-text);
+  background: transparent;
+  cursor: default;
+}
+
+span.trust-btn {
+  display: inline-block;
+  cursor: default;
 }

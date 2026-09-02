@@ -72,6 +72,12 @@ Pressure-test (per the hackathon's own framework): names a real user and moment 
 - **`check_allowlist`** — checks a domain against a curated list of well-known legitimate brands/institutions (`data/trusted_domains.json`). A match is strong evidence; a non-match just means "unknown," not "bad." When the *entire* input is a single trusted domain, the agent skips the LLM loop entirely and returns an instant verdict — zero cost, zero latency for known-safe sites. Add to the list at runtime by submitting `-trust <domain>` instead of a normal investigation.
 - **`compare_brand`** *(stretch goal, cut first if time is short)* — screenshot the landing page and ask Claude (vision) whether it visually matches the brand it claims to be. Heavier dependency (headless browser); only add once the core loop is solid.
 
+### Three surfaces, one backend
+
+- **`frontend/`** — a standalone page. Paste text/a URL, watch the step-by-step trace, get a verdict card with a one-click **Trust `<domain>`** button (calls `-trust` under the hood) when the agent identified a clear domain to trust.
+- **`extension/popup.html`** — the same UI as a Chrome toolbar popup, plus a right-click **"Investigate this link/page with PhishTrace"** context menu (calls the backend directly, shows a native notification).
+- **Active protection** (`extension/background.js`, off by default) — a toggle in the popup that checks new domains as you navigate and redirects you to a warning page (`blocked.html`) for anything that comes back `likely_phishing`. **Read the limitation, not just the feature:** Manifest V3 has no synchronous network blocking anymore, so this cannot be a true pre-block — the target page may start loading for a moment before the tab gets redirected once the verdict returns. It's "catches it within ~1-2 seconds," not "never touches the page." It's off by default and only ever investigates a *new* domain once per browser session (cached in `chrome.storage.session`) specifically because leaving it always-on would mean a real Bedrock call — real time and real AWS budget — on every unfamiliar site visited, which doesn't fit the $20 cap in section 0.
+
 ---
 
 ## 3. Model selection (Amazon Bedrock, us-east-1)
@@ -118,7 +124,8 @@ phishtrace/
 ├── extension/                   # Chrome (Manifest V3) extension -- same backend
 │   ├── manifest.json
 │   ├── popup.html / popup.css / popup.js / app.js
-│   ├── background.js              # right-click "Investigate this link/page" -> notification
+│   ├── background.js              # context menu + off-by-default auto-protect (webNavigation)
+│   ├── blocked.html / blocked.css / blocked.js  # warning page shown when auto-protect blocks a site
 │   └── icons/
 ├── data/
 │   ├── trusted_domains.json         # seed allowlist (committed)

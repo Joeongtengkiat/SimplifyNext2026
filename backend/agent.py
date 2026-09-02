@@ -139,7 +139,13 @@ TOOL_CONFIG = {
                                         },
                                         "source_tool": {
                                             "type": "string",
-                                            "enum": ["check_domain", "fetch_url", "web_search", "reasoning"],
+                                            "enum": [
+                                                "check_domain",
+                                                "fetch_url",
+                                                "web_search",
+                                                "check_allowlist",
+                                                "reasoning",
+                                            ],
                                         },
                                     },
                                     "required": ["signal", "detail", "source_tool"],
@@ -311,12 +317,31 @@ def _is_bare_url(text: str) -> bool:
     return bool(text) and " " not in text and "\n" not in text
 
 
+def _primary_domain(user_input: str, steps: list[dict]) -> str | None:
+    """Best-effort guess at "the domain this investigation was actually about", so the UI can
+    offer a one-click Trust action. Prefers the actual landing page (fetch_url's final_url --
+    what the user would actually land on, post-redirect) over a check_domain call, over the raw
+    input itself."""
+    for step in reversed(steps):
+        if step["tool"] == "fetch_url" and step["result"].get("success") and step["result"].get("final_url"):
+            return registrable_domain(step["result"]["final_url"])
+    for step in reversed(steps):
+        if step["tool"] == "check_domain" and step["result"].get("found"):
+            return step["result"].get("domain")
+
+    stripped = user_input.strip()
+    if _is_bare_url(stripped) and "." in stripped:
+        return registrable_domain(stripped)
+    return None
+
+
 def run_investigation(user_input: str, on_step: Callable[[dict], None] | None = None) -> dict:
     stripped = user_input.strip()
     if _is_bare_url(stripped) and is_trusted(stripped):
         domain = registrable_domain(stripped)
         return {
             "steps": [],
+            "domain": domain,
             "verdict": Verdict(
                 verdict="likely_legitimate",
                 confidence="high",
@@ -360,11 +385,15 @@ def run_investigation(user_input: str, on_step: Callable[[dict], None] | None = 
             )
 
         if submit_input is not None:
-            return _finalize_with_escalation(client, submit_input, steps)
+            outcome = _finalize_with_escalation(client, submit_input, steps)
+            outcome["domain"] = _primary_domain(user_input, steps)
+            return outcome
 
         if not tool_result_blocks:
             break  # model answered without calling a tool at all -- force it to conclude properly
 
         messages.append({"role": "user", "content": tool_result_blocks})
 
-    return _force_conclusion(client, messages, steps)
+    outcome = _force_conclusion(client, messages, steps)
+    outcome["domain"] = _primary_domain(user_input, steps)
+    return outcome

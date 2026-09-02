@@ -6,20 +6,26 @@
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<div class="container">
-  <header>
-    <img src="../extension/icons/icon48.png" alt="" />
-    <h1>PhishTrace</h1>
-  </header>
-  <p class="tagline">
-    Paste a suspicious email/message, or just a URL. Type <code>-trust &lt;domain&gt;</code> to
-    add a domain to the trusted list.
-  </p>
+<div class="banner">
+  <div class="container">
+    <header>
+      <img src="../extension/icons/icon48.png" alt="" />
+      <h1>PhishTrace</h1>
+    </header>
+    <p class="tagline">
+      Paste a suspicious email/message, or just a URL. Type <code>-trust &lt;domain&gt;</code> to
+      add a domain to the trusted list.
+    </p>
+  </div>
+</div>
 
-  <textarea id="input" placeholder="Paste text or a URL here, or type: -trust example.com"></textarea>
-  <div class="actions">
-    <button id="submit">Investigate</button>
-    <span id="status"></span>
+<div class="container">
+  <div class="card">
+    <textarea id="input" placeholder="Paste text or a URL here, or type: -trust example.com"></textarea>
+    <div class="actions">
+      <button id="submit">Investigate</button>
+      <span id="status"></span>
+    </div>
   </div>
 
   <div id="steps"></div>

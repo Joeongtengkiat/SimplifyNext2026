@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Site blocked — PhishTrace</title>
+<link rel="stylesheet" href="blocked.css" />
+</head>
+<body>
+<div class="card">
+  <div class="icon">🚨</div>
+  <h1>PhishTrace blocked this site</h1>
+  <div class="domain" id="domain">loading...</div>
+  <p class="explanation" id="explanation"></p>
+  <ul class="evidence-list" id="evidence"></ul>
+
+  <div class="actions">
+    <button id="go-back">Go back to safety</button>
+    <button id="trust">This is a mistake — trust this domain</button>
+    <button id="proceed">Proceed anyway (not recommended)</button>
+  </div>
+  <div id="status"></div>
+</div>
+
+<script src="blocked.js"></script>
+</body>
+</html>

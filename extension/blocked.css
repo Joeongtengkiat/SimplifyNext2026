@@ -1,0 +1,141 @@
+:root {
+  --phishing-text: #dc2626;
+  --phishing-bg: #fef2f2;
+  --brand: #252f4f;
+  --muted: #6b7280;
+  --border: #e4e7ee;
+  --legit-text: #15803d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--phishing-bg);
+  color: #1a1d29;
+  padding: 24px;
+}
+
+.card {
+  max-width: 520px;
+  width: 100%;
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 8px 30px rgba(220, 38, 38, 0.15);
+  padding: 36px 32px;
+  text-align: center;
+}
+
+.icon {
+  font-size: 48px;
+  margin-bottom: 8px;
+}
+
+h1 {
+  color: var(--phishing-text);
+  font-size: 21px;
+  margin: 0 0 6px;
+}
+
+.domain {
+  font-family: ui-monospace, monospace;
+  background: #f3f4f6;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  display: inline-block;
+  margin-bottom: 16px;
+}
+
+.explanation {
+  font-size: 14px;
+  line-height: 1.55;
+  color: #1a1d29;
+  text-align: left;
+  margin-bottom: 14px;
+}
+
+.evidence-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 20px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.evidence-list li {
+  background: #fafafa;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 11px;
+  font-size: 12.5px;
+}
+
+.evidence-list b {
+  text-transform: capitalize;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+button {
+  border: none;
+  border-radius: 9px;
+  padding: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+}
+
+#go-back {
+  background: var(--brand);
+  color: white;
+}
+
+#go-back:hover {
+  background: #3b4b8a;
+}
+
+#trust {
+  background: transparent;
+  color: var(--legit-text);
+  border: 1px solid var(--legit-text);
+  font-weight: 500;
+  font-size: 13px;
+}
+
+#trust:hover {
+  background: #ecfdf3;
+}
+
+#proceed {
+  background: transparent;
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12.5px;
+  text-decoration: underline;
+  padding: 6px;
+}
+
+#proceed:hover {
+  color: var(--phishing-text);
+}
+
+#status {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 6px;
+}

@@ -27,16 +27,24 @@ function renderSteps(container, steps) {
     .join("");
 }
 
-function renderVerdict(container, v, warnings) {
+function renderVerdict(container, data) {
+  const v = data.verdict;
   const icon = VERDICT_ICONS[v.verdict] || "❓";
+  const alreadyTrusted = v.evidence.some((e) => e.signal === "trusted_allowlist");
+
   const evidenceHtml = v.evidence.length
     ? `<ul class="evidence-list">${v.evidence
         .map((e) => `<li><b>${e.signal}:</b> ${e.detail}</li>`)
         .join("")}</ul>`
     : "";
-  const warningsHtml = warnings && warnings.length
-    ? `<div class="warnings">Note: ${warnings.join(" • ")}</div>`
+  const warningsHtml = data.warnings && data.warnings.length
+    ? `<div class="warnings">Note: ${data.warnings.join(" • ")}</div>`
     : "";
+  const trustButtonHtml = !data.domain
+    ? ""
+    : alreadyTrusted
+    ? `<span class="trust-btn trusted">✓ Already trusted</span>`
+    : `<button class="trust-btn" data-domain="${data.domain}">Trust ${data.domain}</button>`;
 
   container.innerHTML = `
     <div class="verdict-card ${v.verdict}">
@@ -48,9 +56,29 @@ function renderVerdict(container, v, warnings) {
       <p class="explanation">${v.explanation}</p>
       ${evidenceHtml}
       ${warningsHtml}
-      <div class="meta">${v.investigation_steps} investigation step(s) taken</div>
+      <div class="verdict-footer">
+        <span class="meta">${v.investigation_steps} investigation step(s) taken</span>
+        ${trustButtonHtml}
+      </div>
     </div>
   `;
+
+  const trustBtn = container.querySelector("button.trust-btn");
+  if (trustBtn) {
+    trustBtn.addEventListener("click", async () => {
+      const domain = trustBtn.dataset.domain;
+      trustBtn.disabled = true;
+      trustBtn.textContent = "Trusting...";
+      try {
+        await investigate(`-trust ${domain}`);
+        trustBtn.textContent = `✓ Trusted ${domain}`;
+        trustBtn.classList.add("trusted");
+      } catch {
+        trustBtn.textContent = "Trust failed -- try again";
+        trustBtn.disabled = false;
+      }
+    });
+  }
 }
 
 async function investigate(input) {
@@ -85,7 +113,7 @@ function wireUpForm({ inputEl, submitEl, statusEl, stepsEl, verdictEl }) {
 
       statusEl.textContent = "";
       renderSteps(stepsEl, data.steps);
-      renderVerdict(verdictEl, data.verdict, data.warnings);
+      renderVerdict(verdictEl, data);
     } catch (err) {
       statusEl.className = "error";
       statusEl.textContent = `Error: ${err.message}. Is the backend running (uvicorn backend.main:app)?`;
