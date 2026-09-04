@@ -138,6 +138,10 @@ class QueryRequest(BaseModel):
     query_text: str
 
 
+class ChatRequest(BaseModel):
+    message: str
+
+
 class ScheduleEventRequest(BaseModel):
     day: str
     start: str

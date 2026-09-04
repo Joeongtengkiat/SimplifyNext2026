@@ -301,10 +301,10 @@ function renderProposal(container, proposal, { onExecuted } = {}) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Availability query + slot-picker overlay
+// Availability query + slot picker -- rendered inline inside a chat bubble
 // ---------------------------------------------------------------------------------------------
 
-function renderSlotPicker(overlayEl, queryResponse, { onScheduled } = {}) {
+function renderSlotPicker(container, queryResponse, { onScheduled } = {}) {
   currentQueryResponse = queryResponse;
   const slots = queryResponse.free_slots;
 
@@ -322,30 +322,24 @@ function renderSlotPicker(overlayEl, queryResponse, { onScheduled } = {}) {
     ? `<div class="recommended-note">💡 Recommended: <b>${queryResponse.recommended_slot.day} ${queryResponse.recommended_slot.start}-${queryResponse.recommended_slot.end}</b> — ${queryResponse.recommended_slot.reasoning}</div>`
     : "";
 
-  overlayEl.innerHTML = `
-    <div class="modal">
-      <button class="modal-close">✕</button>
-      <h2>Available time</h2>
-      <p class="reasoning">${queryResponse.message}</p>
-      ${recommendedHtml}
-      <div class="slot-grid">${slotCards || '<div class="empty-note">No free slots matched.</div>'}</div>
-      <div id="slot-editor" style="display: none;"></div>
-    </div>
+  container.innerHTML = `
+    <p>${queryResponse.message}</p>
+    ${recommendedHtml}
+    <div class="slot-grid">${slotCards || '<div class="empty-note">No free slots matched.</div>'}</div>
+    <div class="slot-editor" style="display: none;"></div>
   `;
 
-  overlayEl.querySelector(".modal-close").addEventListener("click", () => (overlayEl.style.display = "none"));
-
-  overlayEl.querySelectorAll(".slot-card").forEach((card) => {
+  container.querySelectorAll(".slot-card").forEach((card) => {
     card.addEventListener("click", () => {
-      overlayEl.querySelectorAll(".slot-card").forEach((c) => c.classList.remove("selected"));
+      container.querySelectorAll(".slot-card").forEach((c) => c.classList.remove("selected"));
       card.classList.add("selected");
       const slot = slots[parseInt(card.dataset.idx, 10)];
-      renderSlotEditor(overlayEl.querySelector("#slot-editor"), slot, overlayEl, onScheduled);
+      renderSlotEditor(container.querySelector(".slot-editor"), slot, onScheduled);
     });
   });
 }
 
-function renderSlotEditor(container, slot, overlayEl, onScheduled) {
+function renderSlotEditor(container, slot, onScheduled) {
   container.style.display = "block";
   container.innerHTML = `
     <div class="slot-editor-form">
@@ -364,12 +358,13 @@ function renderSlotEditor(container, slot, overlayEl, onScheduled) {
     const end = container.querySelector("#ed-end").value;
     const title = container.querySelector("#ed-title").value.trim() || "Untitled";
     const statusEl = container.querySelector("#ed-status");
+    const confirmBtn = container.querySelector("#ed-confirm");
 
     try {
       const state = await scheduleEvent(day, start, end, title, "personal");
       statusEl.textContent = "Added to calendar.";
+      confirmBtn.disabled = true;
       if (onScheduled) onScheduled(state);
-      setTimeout(() => (overlayEl.style.display = "none"), 700);
     } catch (err) {
       statusEl.textContent = `Failed: ${err.message}`;
     }

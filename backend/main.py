@@ -7,8 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from backend import world_state  # noqa: E402
 from backend.agent import run_adaptation  # noqa: E402
+from backend.intent import classify_intent  # noqa: E402
 from backend.query_agent import run_query  # noqa: E402
 from backend.schema import (  # noqa: E402
+    ChatRequest,
     ExecuteRequest,
     FeedbackRequest,
     InjectChangeRequest,
@@ -79,6 +81,17 @@ def feedback(req: FeedbackRequest) -> dict:
 def query(req: QueryRequest) -> dict:
     state = world_state.load()
     return run_query(req.query_text, state)
+
+
+@app.post("/chat")
+def chat(req: ChatRequest) -> dict:
+    """Single entry point for the chat UI -- routes each message to whichever agent actually
+    handles it (still two separate agents under the hood, just one door in)."""
+    state = world_state.load()
+    kind = classify_intent(req.message)
+    if kind == "query":
+        return {"kind": "query", **run_query(req.message, state)}
+    return {"kind": "adaptation", **run_adaptation(req.message, state)}
 
 
 _next_event_id = [0]
