@@ -4,5 +4,4 @@ __pycache__/
 .env
 .vscode/
 data/usage_log.jsonl
-data/eval_report.json
-data/test_cases/labeled.json
+data/world_state.json

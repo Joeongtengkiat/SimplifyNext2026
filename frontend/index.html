@@ -2,45 +2,99 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>PhishTrace</title>
+<title>ADAPT</title>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 <div class="banner">
   <div class="container">
     <header>
-      <img src="../extension/icons/icon48.png" alt="" />
-      <h1>PhishTrace</h1>
+      <h1>ADAPT</h1>
     </header>
-    <p class="tagline">
-      Paste a suspicious email/message, or just a URL. Type <code>-trust &lt;domain&gt;</code> to
-      add a domain to the trusted list.
-    </p>
+    <p class="tagline">"Your life changed 30 seconds ago."</p>
   </div>
 </div>
 
 <div class="container">
   <div class="card">
-    <textarea id="input" placeholder="Paste text or a URL here, or type: -trust example.com"></textarea>
+    <h2>Alex's week</h2>
+    <div id="schedule"></div>
     <div class="actions">
-      <button id="submit">Investigate</button>
+      <button id="reset-btn" class="secondary">Reset demo</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Something changed</h2>
+    <textarea id="change-input">Marketing assignment deadline moved from Friday to Tuesday</textarea>
+    <div class="actions">
+      <button id="inject-btn">Adapt</button>
       <span id="status"></span>
     </div>
   </div>
 
-  <div id="steps"></div>
-  <div id="verdict"></div>
+  <div id="steps-card" class="card" style="display: none;">
+    <h2>Reasoning trace</h2>
+    <div id="steps"></div>
+  </div>
+
+  <div id="proposal-card" class="card" style="display: none;"></div>
 </div>
 
 <script src="app.js"></script>
 <script>
-  wireUpForm({
-    inputEl: document.getElementById("input"),
-    submitEl: document.getElementById("submit"),
-    statusEl: document.getElementById("status"),
-    stepsEl: document.getElementById("steps"),
-    verdictEl: document.getElementById("verdict"),
+  const scheduleEl = document.getElementById("schedule");
+  const stepsCardEl = document.getElementById("steps-card");
+  const stepsEl = document.getElementById("steps");
+  const proposalCardEl = document.getElementById("proposal-card");
+  const statusEl = document.getElementById("status");
+  const injectBtn = document.getElementById("inject-btn");
+  const resetBtn = document.getElementById("reset-btn");
+  const changeInput = document.getElementById("change-input");
+
+  async function refreshSchedule() {
+    const state = await fetchState();
+    renderSchedule(scheduleEl, state);
+  }
+
+  injectBtn.addEventListener("click", async () => {
+    const text = changeInput.value.trim();
+    if (!text) return;
+
+    stepsCardEl.style.display = "block";
+    proposalCardEl.style.display = "none";
+    stepsEl.innerHTML = "";
+    statusEl.innerHTML = `<span class="spinner"></span>Sensing, reasoning, predicting...`;
+    injectBtn.disabled = true;
+
+    try {
+      const data = await injectChange(text);
+      renderSteps(stepsEl, data.steps);
+
+      if (!data.proposal) {
+        statusEl.textContent = "The agent couldn't produce a proposal -- see warnings.";
+        return;
+      }
+
+      statusEl.textContent = "";
+      proposalCardEl.style.display = "block";
+      renderProposal(proposalCardEl, data.proposal, { onExecuted: refreshSchedule });
+    } catch (err) {
+      statusEl.textContent = `Error: ${err.message}. Is the backend running (uvicorn backend.main:app)?`;
+    } finally {
+      injectBtn.disabled = false;
+    }
   });
+
+  resetBtn.addEventListener("click", async () => {
+    const state = await resetState();
+    renderSchedule(scheduleEl, state);
+    stepsCardEl.style.display = "none";
+    proposalCardEl.style.display = "none";
+    statusEl.textContent = "";
+  });
+
+  refreshSchedule();
 </script>
 </body>
 </html>

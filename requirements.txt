@@ -2,9 +2,4 @@ fastapi
 uvicorn
 boto3
 python-dotenv
-requests
-beautifulsoup4
-lxml
-tldextract
-tavily-python
 pydantic

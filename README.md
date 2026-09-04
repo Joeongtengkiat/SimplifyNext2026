@@ -1,144 +1,165 @@
-# PhishTrace — Agentic Phishing Investigation Assistant
+# ADAPT — An AI That Adapts With You, Not For You
 
-An agent that investigates a suspicious email or link the way a security analyst would: it decides what to check, chases the evidence across multiple sources, and only stops once it has enough to issue a verdict — rather than running one fixed classifier call.
+An agent that senses a change in your world, reasons about which of your existing commitments it actually affects, predicts the consequences of different responses, and proposes — never silently executes — the best next move. Every recommendation comes with a **WHY**: the actual numbers behind it, not a vibe.
 
 **Event:** IGNITE Agentic AI Hackathon 2026 (SimplifyNext)
-**Submission deadline:** Sun/Mon 2026-09-07/08 — confirm the exact cutoff with the team; official deck says Solution Submission on 7 Sep, semi-finals 9–11 Sep, Grand Finale 18 Sep at NUS.
-**Today:** 2026-09-02 (kickoff day) — roughly 5–6 days to build.
-**Platform:** AWS sandbox account, `us-east-1` only (constraints below inherited from the team's IGNITE AWS access guide — verify these still hold for this project's lease).
+**Today:** 2026-09-04. Submission ~2026-09-07 — **confirm the exact cutoff with the team.**
+**Platform:** AWS sandbox account, `us-east-1` only (see constraints below).
+
+This replaces the earlier PhishTrace concept (a phishing-investigation agent) — full history is still in git if it's ever useful, but the team has pivoted. Everything below is the current direction.
 
 ---
 
-## 0. Hard constraints (read before designing anything)
+## 0. Hard constraints (unchanged from before, still apply)
 
 | Constraint | Detail |
 |---|---|
 | **Budget** | Bar shows $30 but **access is revoked at $20**. At $30 the account is **terminated**. |
-| **Leases** | One per team, no second lease granted. Approval takes **up to 2 working days** — request it today if not already done. |
-| **Region** | `us-east-1` only. Wrong region = cascade of `Access denied` errors. |
-| **Credentials** | Access keys **expire every 12 hours** — re-login to the AWS access portal for fresh ones. |
+| **Leases** | One per team, no second lease granted. Approval takes **up to 2 working days**. |
+| **Region** | `us-east-1` only. |
+| **Credentials** | Access keys **expire every 12 hours**. |
 | **Banned by cost** | OpenSearch, SageMaker real-time endpoints, NAT Gateway, ALB/NLB, EC2/RDS, Bedrock Provisioned Throughput. |
-| **Encouraged** | Bedrock (on-demand), Lambda (+ Function URLs), DynamoDB on-demand, S3, S3 Vectors. |
+| **Encouraged** | Bedrock (on-demand), Lambda, DynamoDB on-demand, S3. |
 
-**Set an AWS Budgets alarm at $5 on day one.**
-
-**Deliverables (per official IGNITE guidelines):** Project files (max 5GB), Presentation Deck (max 10 slides), and either a Digital Solution Video or a Simulation Recording (max 5 minutes). **No live public deployment is required** — a working local demo plus a recorded video is enough. This lets us skip Lambda/API Gateway entirely and run the backend locally, which is a meaningful time save given the AWS constraints above.
+**Deliverables:** Project files (max 5GB), Presentation Deck (max 10 slides), a Digital Solution Video or Simulation Recording (max 5 min). No live deployment required — a working local demo plus a recording is enough.
 
 ---
 
 ## 1. Problem statement (POV format, per hackathon judging rubric)
 
-> A working adult who receives an unexpected email, SMS, or message with a link needs a fast way to tell whether it's a scam **before** clicking or replying, because phishing and impersonation scams make up a large share of reported scam losses each year [cite: latest national scam statistics — fill in exact figure/source before the deck], and checking a domain's registration age, tracing where a link actually redirects to, and spotting a look-alike page all require technical knowledge or tools most people don't have and don't have time for in the moment.
+> A university student juggling classes, a part-time commitment, club obligations, and a job/internship search needs a way to immediately understand how a single change — a moved deadline, a cancelled meeting, a delayed commute — ripples across everything else they've already committed to, because today that replanning is entirely manual and scattered across a calendar, a messaging app, and a task list, and [cite: average time students spend re-arranging a schedule per disruption / share of missed deadlines caused by an unnoticed downstream conflict, not by forgetting outright — find a real source before the deck].
 
-Pressure-test (per the hackathon's own framework): names a real user and moment (yes), carries evidence to cite (needs a real figure — TODO before submission), stays true regardless of what gets built (yes — the need exists even without agentic AI), is not the "everyone" problem (scoped to "received a suspicious message, deciding whether to act on it").
+Pressure-test: names a specific person and moment (yes); the `[cite: ...]` bracket still needs a real source — **do this before the deck is finalized**, it's currently the weakest link; survives a different solution — the ripple-effect replanning problem exists whether or not ADAPT gets built (yes, passes); not a solution in disguise — describes the person's situation, not "students need an AI scheduling agent."
 
-**Why this needs agentic AI, not just a classifier** (judges explicitly grade this): a single "is this phishing? yes/no" model call can't chase evidence. The value is in the *investigation* — deciding what to check next based on what's already been found (a fresh domain is suspicious but not proof; a redirect to a look-alike login page is much stronger; a web search turning up scam reports settles it), and knowing when it has enough evidence to stop. That adaptive, multi-tool, variable-depth behavior is what a fixed pipeline can't replicate.
-
----
-
-## 2. Architecture
-
-```
-+----------------------+
-| Simple web frontend  |  paste an email/message or a URL
-| (local, no framework |  watch the agent's investigation
-|  required)           |  steps stream in, see the verdict
-+----------+-----------+
-           | POST /investigate { text? , url? }
-           v
-+----------------------------------------------+
-| FastAPI backend (local, uvicorn)              |
-|   agent.py — Bedrock Converse tool-use loop   |
-|   Claude Haiku 4.5, bounded to ~6-8 turns     |
-+----------------------------------------------+
-           |
-           v  (Claude decides which tools to call, and when to stop)
-+----------------+  +----------------+  +----------------+  +------------------+
-| check_domain   |  | fetch_url      |  | web_search     |  | compare_brand    |
-| RDAP/WHOIS,    |  | follow         |  | Tavily API —   |  | (stretch) screen-|
-| free, no key   |  | redirects,     |  | scam reports,  |  | shot + vision    |
-|                |  | fetch page text|  | official site  |  | vs claimed brand |
-+----------------+  +----------------+  +----------------+  +------------------+
-           |
-           v
-   Evidence list + risk verdict, shown with the reasoning trail
-```
-
-### Why this tool set
-
-- **`check_domain`** — domain age is the single strongest cheap signal (freshly registered domains dominate phishing infrastructure). Free via RDAP (`rdap.org`), no API key.
-- **`fetch_url`** — follows the actual redirect chain (phishing links often hop through shorteners/redirectors) and pulls the landing page's cleaned text so Claude can read what it actually says.
-- **`web_search`** — the step a fixed classifier can't do: search for the domain/sender/claim to find scam reports, or find the real official site to compare against. Use Tavily (built for LLM agents, free tier, one API key) rather than scraping a search engine.
-- **`check_allowlist`** — checks a domain against a curated list of well-known legitimate brands/institutions (`data/trusted_domains.json`). A match is strong evidence; a non-match just means "unknown," not "bad." When the *entire* input is a single trusted domain, the agent skips the LLM loop entirely and returns an instant verdict — zero cost, zero latency for known-safe sites. Add to the list at runtime by submitting `-trust <domain>` instead of a normal investigation.
-- **`compare_brand`** *(stretch goal, cut first if time is short)* — screenshot the landing page and ask Claude (vision) whether it visually matches the brand it claims to be. Heavier dependency (headless browser); only add once the core loop is solid.
-
-### Three surfaces, one backend
-
-- **`frontend/`** — a standalone page. Paste text/a URL, watch the step-by-step trace, get a verdict card with a one-click **Trust `<domain>`** button (calls `-trust` under the hood) when the agent identified a clear domain to trust.
-- **`extension/popup.html`** — the same UI as a Chrome toolbar popup, plus a right-click **"Investigate this link/page with PhishTrace"** context menu (calls the backend directly, shows a native notification).
-- **Active protection** (`extension/background.js`, off by default) — a toggle in the popup that checks new domains as you navigate and redirects you to a warning page (`blocked.html`) for anything that comes back `likely_phishing`. **Read the limitation, not just the feature:** Manifest V3 has no synchronous network blocking anymore, so this cannot be a true pre-block — the target page may start loading for a moment before the tab gets redirected once the verdict returns. It's "catches it within ~1-2 seconds," not "never touches the page." It's off by default and only ever investigates a *new* domain once per browser session (cached in `chrome.storage.session`) specifically because leaving it always-on would mean a real Bedrock call — real time and real AWS budget — on every unfamiliar site visited, which doesn't fit the $20 cap in section 0.
+**Why this needs agentic AI, not a smarter reminder app:** a fixed calendar/reminder tool can tell you *that* something changed. It can't read an unstructured announcement, figure out *which* of your existing, unrelated commitments it now conflicts with, weigh several ways to resolve that conflict against your actual priorities and history, and only then act within bounds you've approved. That's sense → reason → predict → decide → act → learn — a loop, not a single classification.
 
 ---
 
-## 3. Model selection (Amazon Bedrock, us-east-1)
+## 2. Scope decision (read this before assuming the pitch = the build)
+
+The original concept describes continuous monitoring across Canvas, email, Telegram, WhatsApp, calendars, and live "digital twin" life simulation. **None of that is buildable credibly in ~3 days**, and a demo that depends on three external OAuth integrations all working live in front of judges is a bigger risk than the idea itself.
+
+What's actually being built:
+
+- The **real** Sense → Reason → Predict → Decide → Act → Learn loop, genuinely working end-to-end.
+- **Bounded autonomy**, actually enforced in code, not just described in the pitch: every proposed action is tagged 🟢 auto-safe / 🟡 needs approval / 🔴 never auto-executed, and the backend enforces that tagging when a plan is executed.
+- The **WHY button** — every recommendation cites the actual numbers a deterministic tool produced (available hours, completion probability), not an invented-sounding percentage.
+- A **seeded scenario** (one persona, "Alex," and the exact deadline-conflict walkthrough from the original pitch) standing in for live calendar/messaging integration. This is a deliberate, disclosed scope cut — say so plainly in the deck rather than implying live integration. Google Calendar (real read/write, well-documented OAuth) is the one stretch integration worth attempting if the core loop is solid with a day or more to spare; Canvas/Telegram/WhatsApp are out of scope for this hackathon.
+
+This mirrors the hackathon's own "Building Agents That Hold Up" guidance: build a short, single-purpose agent that does one job well, over one that half-works across many.
+
+---
+
+## 3. Architecture
+
+```
+                    "Marketing assignment deadline moved
+                     from Friday to Tuesday" (typed in, or
+                     a demo button — stands in for a real
+                     Canvas/email webhook)
+                              │
+                              ▼
+                    ┌───────────────────┐
+                    │   SENSE            │  raw change event (free text)
+                    └─────────┬──────────┘
+                              ▼
+                    ┌───────────────────┐
+                    │   REASON           │  Claude reads world_state (schedule,
+                    │  (agent loop)      │  tasks, preferences) + the change,
+                    └─────────┬──────────┘  identifies the affected task
+                              ▼
+                    ┌───────────────────┐
+              ┌────▶│ detect_conflicts  │  deterministic: remaining work vs
+              │     │ (tool)            │  available capacity before new deadline
+              │     └─────────┬──────────┘
+              │               ▼
+              │     ┌───────────────────┐
+              │     │   PREDICT          │  agent proposes 2-3 candidate
+              │     │ score_option       │  reshuffles; each is scored by a
+              │     │ (tool, per option) │  deterministic completion-probability
+              │     └─────────┬──────────┘  formula -- not an LLM guess
+              │               ▼
+              │     ┌───────────────────┐
+              └─────│   DECIDE            │  propose_adaptation tool: ranks
+                    │ (submit tool)       │  options, recommends one, WHY
+                    └─────────┬──────────┘  grounded in the tool numbers above,
+                              ▼              each action tagged 🟢/🟡/🔴
+                    ┌───────────────────┐
+                    │  HUMAN CHECKPOINT  │  shown with the WHY expanded;
+                    │  Execute / Reject  │  nothing has been applied yet
+                    └─────────┬──────────┘
+                              ▼
+                    ┌───────────────────┐
+                    │   ACT               │  apply_adaptation: commits 🟢/🟡
+                    │ (only on approval)  │  actions to world_state; any 🔴
+                    └─────────┬──────────┘  action is refused, not executed
+                              ▼
+                    ┌───────────────────┐
+                    │   LEARN             │  log_feedback: approve/reject
+                    │                     │  nudges preference weights (e.g.
+                    └───────────────────┘  "protect basketball") for next time
+```
+
+### Why each piece is a deterministic tool, not just the LLM talking
+
+`detect_conflicts` and `score_option` are plain Python, not model calls. The 87%-style completion-probability number in the demo has to come from a real, explainable formula (available hours vs. hours required, adjusted for the task's actual progress) — an LLM inventing a percentage that *sounds* right is exactly the kind of thing that falls apart under a judge's first follow-up question. The agent's job is deciding *which* options to generate and *how to explain* the numbers in plain language, grounded in what the tools actually returned — the same evidence-grounding pattern that worked well in the earlier build.
+
+---
+
+## 4. Bounded autonomy (the credibility mechanism)
+
+| Tier | Examples in this scenario | Enforcement |
+|---|---|---|
+| 🟢 Auto-safe | Reorganize the internal task list, generate a study-block breakdown, compute the recommendation | Applied as soon as a plan is generated — no approval needed, nothing external or hard to undo |
+| 🟡 Needs approval | Move a calendar event, draft a message to a teammate | Only committed to `world_state` when the user clicks **Execute adaptation** — a drafted message is shown as text, never auto-sent (no real messaging integration exists, and it shouldn't pretend to) |
+| 🔴 Never auto-executed | Dropping a commitment entirely, anything financial | The backend refuses to apply a 🔴-tagged action even if the model proposes one — flagged for the user to handle manually, not automated around |
+
+This tiering is enforced in `backend/tools/apply_adaptation.py`, not just asserted in the prompt — a judge asking "what stops it from just sending the email itself" has a concrete code-level answer.
+
+---
+
+## 5. Model selection (Amazon Bedrock, us-east-1)
+
+Same reasoning as before: Claude Haiku 4.5 is the hackathon's own recommended default — fast and cheap enough that a multi-step reasoning loop stays quick and affordable, and tool-use/structured-output quality is well within what this needs.
 
 | Job | Model | Bedrock model ID |
 |---|---|---|
-| Agent loop (tool use, Converse API) | Claude Haiku 4.5 — fast, cheap, this is the hackathon's own recommended default | `us.anthropic.claude-haiku-4-5-v1:0` |
-| Final verdict + user-facing explanation | Claude Haiku 4.5 | `us.anthropic.claude-haiku-4-5-v1:0` |
-| Escalation for ambiguous cases *(optional)* | Claude Sonnet 4.5 — stronger reasoning, single-region | confirm exact ID in the Bedrock console before use |
-
-**Rules of thumb**
-
-- Start with Haiku 4.5 for the whole loop — it's cheap enough to not think about, and tool-orchestration + evidence synthesis is well within its ability.
-- Only reach for Sonnet if testing shows Haiku missing distinctions (e.g., an ambiguous but legitimate marketing redirect vs. a real phish) — swap the model for that one call, don't rebuild the loop.
-- **Enable model access** in the Bedrock console (us-east-1) the moment the AWS lease is approved — this blocks everything else, do it first.
-- Newer Anthropic models on Bedrock need the **`us.` inference-profile prefix**.
-- Bedrock pricing is partner-priced, separate from Anthropic's direct API — check current rates before assuming a number.
+| Agent loop (tool use, Converse API) | Claude Haiku 4.5 | `us.anthropic.claude-haiku-4-5-v1:0` |
+| Escalation for low-confidence proposals *(optional, reuse the earlier pattern)* | Claude Sonnet | confirm exact ID in the Bedrock console |
 
 ---
 
-## 4. Repo layout
+## 6. Repo layout
 
 ```
-phishtrace/
+adapt/
 ├── README.md
 ├── requirements.txt
-├── .env.example              # AWS_ACCESS_KEY_ID / SECRET / SESSION_TOKEN / REGION / TAVILY_API_KEY / BEDROCK_MODEL_ID
+├── .env.example                  # AWS creds + BEDROCK_MODEL_ID
 ├── backend/
-│   ├── main.py                  # FastAPI app: /investigate, /health, the -trust command
-│   ├── bedrock.py                # boto3 client, Converse wrapper, retry, token-usage logging
-│   ├── agent.py                   # the tool-use loop: bounded iterations, submit_verdict tool,
-│   │                               # grounding checks, Sonnet escalation on low confidence
-│   ├── domain_utils.py             # shared registrable-domain resolution (RDAP + trust list need it)
-│   ├── trust_list.py                # curated allowlist: check_allowlist tool + -trust command backend
+│   ├── main.py                    # FastAPI: /state, /inject-change, /execute, /feedback, /reset
+│   ├── bedrock.py                  # boto3 Converse wrapper (generic, reused as-is)
+│   ├── agent.py                     # the reasoning loop: get_world_state -> detect_conflicts ->
+│   │                                 # score_option (per candidate) -> propose_adaptation
+│   ├── world_state.py                # loads/saves data/world_state.json, seeded from
+│   │                                   # data/world_state.seed.json; /reset restores the seed
 │   ├── tools/
-│   │   ├── check_domain.py          # RDAP lookup -> registrar, age_days
-│   │   ├── fetch_url.py             # requests + redirect chain + BeautifulSoup text extraction
-│   │   └── web_search.py            # Tavily search wrapper
-│   └── schema.py                    # Pydantic models for tool I/O and the final verdict
-├── frontend/                    # standalone web page (same backend, no build step)
-│   ├── index.html
-│   ├── style.css
+│   │   ├── detect_conflicts.py        # deterministic: remaining work vs. available capacity
+│   │   ├── score_option.py             # deterministic: completion-probability formula
+│   │   ├── apply_adaptation.py         # commits an approved plan, enforcing 🟢/🟡/🔴
+│   │   └── log_feedback.py              # the Learn step: nudges preference weights
+│   └── schema.py                     # Pydantic models for world state + the adaptation proposal
+├── frontend/
+│   ├── index.html                  # Before/After schedule view, Inject Change, WHY-expandable
+│   ├── style.css                    # proposal card, tool badges (see PhishTrace's for the look)
 │   └── app.js
-├── extension/                   # Chrome (Manifest V3) extension -- same backend
-│   ├── manifest.json
-│   ├── popup.html / popup.css / popup.js / app.js
-│   ├── background.js              # context menu + off-by-default auto-protect (webNavigation)
-│   ├── blocked.html / blocked.css / blocked.js  # warning page shown when auto-protect blocks a site
-│   └── icons/
-├── data/
-│   ├── trusted_domains.json         # seed allowlist (committed)
-│   └── test_cases/                  # labeled.json.example -> copy to labeled.json (gitignored)
-└── scripts/
-    ├── cost_report.py               # sum token usage -> running $ estimate
-    ├── evaluate.py                  # score the agent against data/test_cases/labeled.json
-    └── gen_icons.py                 # regenerates extension/icons/*.png if the icon design changes
+└── data/
+    └── world_state.seed.json      # Alex's schedule/tasks/preferences -- the demo scenario
 ```
 
 ---
 
-## 5. Setup
+## 7. Setup
 
 ```bash
 python -m venv .venv
@@ -148,83 +169,70 @@ cp .env.example .env
 uvicorn backend.main:app --reload
 ```
 
-Paste fresh AWS keys from the access portal into `.env` — they expire every 12 hours.
-
-Then either open `frontend/index.html` directly in a browser, or load the extension:
-`chrome://extensions` → enable Developer mode → **Load unpacked** → select the `extension/`
-folder. The backend must be running locally either way (`host_permissions` in the manifest only
-allows the extension to talk to `http://localhost:8000`).
-
-`requirements.txt` baseline:
-
-```
-fastapi
-uvicorn
-boto3
-python-dotenv
-requests
-beautifulsoup4
-lxml
-tavily-python
-pydantic
-```
-
-**Never commit `.env`.**
+Then open `frontend/index.html`. `detect_conflicts` and `score_option` need no AWS access at all and can be developed/tested entirely offline; only `/inject-change` (the actual reasoning step) needs Bedrock credentials.
 
 ---
 
-## 6. Six-day plan
+## 8. Three-day plan
 
 | Day | Ship |
 |---|---|
-| **Tue 09-02 (today)** | Confirm/submit AWS lease if not already done (2-day lead time is the critical path). Write `check_domain` and `fetch_url` tools — both work offline against real URLs, zero AWS dependency. Pin down the problem statement's evidence citation. |
-| **Wed 09-03** | Lease lands: enable Bedrock model access, boto3 hello-world, wire the Converse tool-use loop with Haiku 4.5 and the two working tools. Test against 3–4 known phishing URLs (PhishTank samples) and 3–4 legitimate sites. |
-| **Thu 09-04** | Add `web_search` (Tavily). **Goal: end-to-end verdict on a real suspicious URL by tonight.** Design the evidence output format. |
-| **Fri 09-05** | Build the minimal frontend (paste input, stream investigation steps). Add `compare_brand` only if the core loop is solid and there's time left. |
-| **Sat 09-06** | Run the test-case set, tune the stop condition and iteration cap, fix cases where the agent over- or under-investigates. Cover this testing methodology in the slides (judges explicitly score it). |
-| **Sun 09-07** | Demo script, slides (10-slide structure), record a fallback video, freeze code. |
-
-> **Hard rule: a real end-to-end verdict on a live URL by Thursday night.** A thin working loop beats three disconnected tools.
+| **Fri 09-04 (today)** | `world_state.py` + seed data matching the exact pitch scenario. `detect_conflicts` and `score_option` — both fully testable offline, no AWS needed. Nail the numbers so the "good" option scores clearly better than a naive one. |
+| **Sat 09-05** | Wire the agent loop (Converse tool-use, Haiku) once Bedrock access is confirmed. **Goal: a real end-to-end run — inject the change, get a grounded proposal back — by tonight.** |
+| **Sun 09-06** | `apply_adaptation` with real tier enforcement, `log_feedback` for the Learn step, the frontend (Before/After view, WHY-expandable proposal card, Execute/Reject). Rehearse the demo script below. |
+| **Mon 09-07 (buffer / submission)** | Fix whatever the rehearsal exposed. Record the fallback video. Slides. Freeze code. Stretch only if there's real time left: a real Google Calendar read/write. |
 
 ---
 
-## 7. Output contract
+## 9. Output contract
 
 ```json
 {
-  "verdict": "likely_phishing",
-  "confidence": "high",
-  "evidence": [
+  "change_summary": "Marketing assignment deadline moved from Friday to Tuesday",
+  "conflict": {
+    "task": "Marketing assignment",
+    "remaining_hours": 4.0,
+    "available_hours_before_new_due": 2.5,
+    "shortfall_hours": 1.5
+  },
+  "options": [
     {
-      "signal": "domain_age",
-      "detail": "Domain registered 4 days ago via a privacy-shielded registrar"
-    },
-    {
-      "signal": "redirect_chain",
-      "detail": "Link hops through 2 shorteners before landing on a page not affiliated with the claimed bank"
-    },
-    {
-      "signal": "web_search",
-      "detail": "No official presence found for this domain; 3 unrelated scam-report forum threads reference the same URL pattern"
+      "id": "A",
+      "summary": "Move gym Mon->Tue, move project meeting Mon->Thu, block Mon 3-5pm to study",
+      "completion_probability": 0.87,
+      "actions": [
+        {"type": "block_study_time", "day": "Mon", "start": "15:00", "end": "17:00", "tier": "green"},
+        {"type": "move_event", "item": "Basketball", "to_day": "Tue", "to_start": "19:00", "tier": "yellow"},
+        {"type": "draft_message", "to": "project team", "tier": "yellow"}
+      ]
     }
   ],
-  "explanation": "one paragraph, plain language, written by the agent from the evidence above",
+  "recommended_option_id": "A",
+  "reasoning": "Option A closes the 1.5-hour shortfall without touching the Wednesday interview, and only moves basketball by one day rather than cancelling it.",
   "investigation_steps": 4
 }
 ```
 
-`verdict` is one of `likely_legitimate`, `suspicious`, `likely_phishing`.
-
-**Always show the evidence and the steps taken, never a bare score.** This is also what makes "agentic" visible in the demo — the judges are explicitly scoring whether you can show the planning/acting/adapting, not just the final answer.
+**The WHY is always the grounded numbers** (`remaining_hours`, `available_hours_before_new_due`, `completion_probability`) **plus which real tool produced them** — never a plain-language claim with nothing under it.
 
 ---
 
-## 8. Guidance for Claude Code
+## 10. The demo script (from the original pitch, kept close to what was scripted)
 
-- **Bound every loop.** Hard cap the investigation at ~6–8 tool calls in code, independent of the model's own judgement — a loop that only exits when the model is "satisfied" can run forever.
-- **Cost is a hard constraint.** Default to Haiku 4.5 for everything; only escalate a specific call to Sonnet if testing shows a real quality gap.
-- **Tool descriptions are the interface.** The model picks tools by reading their names/descriptions/params — treat those as the highest-leverage prompt text in this codebase.
-- **Keep tool results small and typed** (Pydantic). Don't return raw page dumps into the conversation — extract only what's needed (cleaned text, key metadata), or the context fills with material that has to be re-read every turn.
-- **Everything in `us-east-1`.** Read credentials from `.env` via `python-dotenv`; they rotate every 12 hours — surface auth failures with a clear "re-login for fresh keys" message rather than a raw boto3 traceback.
-- **The verdict is advisory, not an accusation.** Keep user-facing wording probabilistic ("signals suggest") — never assert a specific sender or domain is definitively malicious.
-- Log every Bedrock call's token usage through `scripts/cost_report.py` so running spend is visible.
+1. **Hook:** "Your life changed 30 seconds ago." Show the Before schedule.
+2. **Inject the change:** "🚨 Professor announces: Marketing assignment deadline moved forward 3 days."
+3. **Watch the loop run**, visibly: conflict detected → candidate options generated → each scored → recommendation with WHY.
+4. **Click WHY:** show the actual numbers, not a vibe.
+5. **Execute adaptation** → the schedule updates, a draft message appears (marked "not sent — drafted for you to review"), tier badges visible on each action.
+6. **Close on bounded autonomy:** "ADAPT never replaces my judgment. It makes my judgment more adaptive."
+
+---
+
+## 11. Guidance for Claude Code
+
+- **Keep `detect_conflicts` and `score_option` deterministic and dependency-free.** They're the credibility of the whole demo — an LLM-generated percentage would not survive a judge asking "how did you calculate that."
+- **Bound the agent loop** the same way as before: a hard iteration cap independent of the model's own judgement.
+- **Enforce tiers in code**, in `apply_adaptation.py` — never trust the model's own tier tag without a server-side check against an allowed-action list.
+- **Never actually send a drafted message or write to a real calendar** unless a real integration is deliberately added later — until then, "act" means mutating `world_state.json` and showing drafted text, full stop.
+- **Log every Bedrock call's token usage**, same pattern as before, so spend stays visible against the $20 cutoff.
+- **The seed scenario is the source of truth for the demo.** Don't let ad-hoc test inputs drift the numbers away from what's rehearsed.

@@ -1,0 +1,68 @@
+{
+  "today": "Mon",
+  "schedule": [
+    {
+      "id": "lec1",
+      "day": "Mon",
+      "start": "10:00",
+      "end": "12:00",
+      "title": "Marketing Lecture",
+      "type": "class",
+      "movable": false,
+      "protected": false
+    },
+    {
+      "id": "mtg1",
+      "day": "Mon",
+      "start": "14:00",
+      "end": "15:00",
+      "title": "Group project meeting",
+      "type": "meeting",
+      "movable": true,
+      "protected": false
+    },
+    {
+      "id": "gym1",
+      "day": "Mon",
+      "start": "19:00",
+      "end": "20:30",
+      "title": "Basketball",
+      "type": "personal",
+      "movable": true,
+      "protected": true
+    },
+    {
+      "id": "int1",
+      "day": "Wed",
+      "start": "14:00",
+      "end": "15:00",
+      "title": "Internship interview",
+      "type": "interview",
+      "movable": false,
+      "protected": false
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task1",
+      "title": "Marketing assignment",
+      "due_day": "Fri",
+      "hours_required": 4.0,
+      "hours_completed": 0.0,
+      "priority": "high"
+    }
+  ],
+  "daily_capacity_hours": {
+    "Mon": 5.0,
+    "Tue": 1.0,
+    "Wed": 0.5,
+    "Thu": 4.0,
+    "Fri": 4.0,
+    "Sat": 6.0,
+    "Sun": 6.0
+  },
+  "preferences": {
+    "protect_basketball": 0.8,
+    "protect_study_evenings": 0.5
+  }
+}

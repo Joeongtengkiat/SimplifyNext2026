@@ -1,124 +1,167 @@
 const API_BASE = "http://localhost:8000";
+const DAY_ORDER = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-const TOOL_ICONS = {
-  check_domain: "\u{1F4C7}", // card index
-  fetch_url: "\u{1F310}", // globe
-  web_search: "\u{1F50D}", // magnifying glass
-  check_allowlist: "✅", // check mark
+const STEP_LABEL = {
+  detect_conflicts: "Checked schedule conflicts",
+  score_option: "Scored a candidate plan",
 };
 
-const VERDICT_ICONS = {
-  likely_legitimate: "✅",
-  suspicious: "⚠️",
-  likely_phishing: "\u{1F6A8}",
-};
+let currentProposal = null;
 
-function renderSteps(container, steps) {
-  container.innerHTML = steps
-    .map((s) => {
-      const icon = TOOL_ICONS[s.tool] || "\u{1F6E0}️";
-      const inputSummary = Object.values(s.input || {}).join(", ");
-      return `<div class="step">
-        <span class="icon">${icon}</span>
-        <span class="tool-name">${s.tool}</span>
-        <span class="tool-input">${inputSummary}</span>
-      </div>`;
+function renderSchedule(container, state) {
+  const byDay = {};
+  for (const day of DAY_ORDER) byDay[day] = [];
+  for (const item of state.schedule) {
+    if (byDay[item.day]) byDay[item.day].push(item);
+  }
+
+  container.innerHTML = DAY_ORDER.filter((d) => byDay[d].length)
+    .map((day) => {
+      const items = byDay[day]
+        .sort((a, b) => a.start.localeCompare(b.start))
+        .map(
+          (item) => `<div class="sched-item type-${item.type}">
+            <span class="time">${item.start}-${item.end}</span>
+            <span class="title">${item.title}</span>
+          </div>`
+        )
+        .join("");
+      return `<div class="day-group"><div class="day-label">${day}${day === state.today ? " (today)" : ""}</div>${items}</div>`;
     })
     .join("");
 }
 
-function renderVerdict(container, data) {
-  const v = data.verdict;
-  const icon = VERDICT_ICONS[v.verdict] || "❓";
-  const alreadyTrusted = v.evidence.some((e) => e.signal === "trusted_allowlist");
-
-  const evidenceHtml = v.evidence.length
-    ? `<ul class="evidence-list">${v.evidence
-        .map((e) => `<li><b>${e.signal}:</b> ${e.detail}</li>`)
-        .join("")}</ul>`
-    : "";
-  const warningsHtml = data.warnings && data.warnings.length
-    ? `<div class="warnings">Note: ${data.warnings.join(" • ")}</div>`
-    : "";
-  const trustButtonHtml = !data.domain
-    ? ""
-    : alreadyTrusted
-    ? `<span class="trust-btn trusted">✓ Already trusted</span>`
-    : `<button class="trust-btn" data-domain="${data.domain}">Trust ${data.domain}</button>`;
-
-  container.innerHTML = `
-    <div class="verdict-card ${v.verdict}">
-      <div class="verdict-head">
-        <span class="verdict-icon">${icon}</span>
-        <span class="verdict-title">${v.verdict.replace(/_/g, " ")}</span>
-        <span class="confidence-pill">${v.confidence} confidence</span>
-      </div>
-      <p class="explanation">${v.explanation}</p>
-      ${evidenceHtml}
-      ${warningsHtml}
-      <div class="verdict-footer">
-        <span class="meta">${v.investigation_steps} investigation step(s) taken</span>
-        ${trustButtonHtml}
-      </div>
-    </div>
-  `;
-
-  const trustBtn = container.querySelector("button.trust-btn");
-  if (trustBtn) {
-    trustBtn.addEventListener("click", async () => {
-      const domain = trustBtn.dataset.domain;
-      trustBtn.disabled = true;
-      trustBtn.textContent = "Trusting...";
-      try {
-        await investigate(`-trust ${domain}`);
-        trustBtn.textContent = `✓ Trusted ${domain}`;
-        trustBtn.classList.add("trusted");
-      } catch {
-        trustBtn.textContent = "Trust failed -- try again";
-        trustBtn.disabled = false;
-      }
-    });
-  }
+async function fetchState() {
+  const resp = await fetch(`${API_BASE}/state`);
+  return resp.json();
 }
 
-async function investigate(input) {
-  const resp = await fetch(`${API_BASE}/investigate`, {
+async function resetState() {
+  const resp = await fetch(`${API_BASE}/reset`, { method: "POST" });
+  return resp.json();
+}
+
+async function injectChange(changeText) {
+  const resp = await fetch(`${API_BASE}/inject-change`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ input }),
+    body: JSON.stringify({ change_text: changeText }),
   });
   if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
   return resp.json();
 }
 
-function wireUpForm({ inputEl, submitEl, statusEl, stepsEl, verdictEl }) {
-  submitEl.addEventListener("click", async () => {
-    const text = inputEl.value.trim();
-    if (!text) return;
-
-    stepsEl.innerHTML = "";
-    verdictEl.innerHTML = "";
-    statusEl.className = "";
-    statusEl.innerHTML = `<span class="spinner"></span>Investigating...`;
-    submitEl.disabled = true;
-
-    try {
-      const data = await investigate(text);
-
-      if (data.command === "trust") {
-        statusEl.className = data.error ? "error" : "";
-        statusEl.textContent = data.error || data.message;
-        return;
-      }
-
-      statusEl.textContent = "";
-      renderSteps(stepsEl, data.steps);
-      renderVerdict(verdictEl, data);
-    } catch (err) {
-      statusEl.className = "error";
-      statusEl.textContent = `Error: ${err.message}. Is the backend running (uvicorn backend.main:app)?`;
-    } finally {
-      submitEl.disabled = false;
-    }
+async function executeOption(optionId, proposal) {
+  const resp = await fetch(`${API_BASE}/execute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ option_id: optionId, proposal }),
   });
+  if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+  return resp.json();
+}
+
+async function sendFeedback(optionId, approved, proposal) {
+  await fetch(`${API_BASE}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ option_id: optionId, approved, proposal }),
+  });
+}
+
+function renderSteps(container, steps) {
+  container.innerHTML = steps
+    .map((s) => `<div class="step"><b>${STEP_LABEL[s.tool] || s.tool}</b> — ${JSON.stringify(s.input)}</div>`)
+    .join("");
+}
+
+function renderProposal(container, proposal, { onExecuted } = {}) {
+  currentProposal = proposal;
+  const c = proposal.conflict;
+
+  const conflictHtml = c
+    ? `<div class="conflict-summary">
+        <div class="stat"><span class="num">${c.remaining_hours}h</span>needed</div>
+        <div class="stat"><span class="num">${c.available_hours_before_new_due}h</span>available before ${c.new_due_day}</div>
+        <div class="stat"><span class="num">${c.shortfall_hours}h</span>shortfall</div>
+      </div>`
+    : "";
+
+  const optionsHtml = proposal.options
+    .map((opt) => {
+      const isRecommended = opt.id === proposal.recommended_option_id;
+      const actionsHtml = opt.actions
+        .map(
+          (a) =>
+            `<li><span class="tier-badge tier-${a.tier}">${a.tier}</span> ${describeAction(a)}</li>`
+        )
+        .join("");
+      return `
+        <div class="option-card ${isRecommended ? "recommended" : ""}" data-option-id="${opt.id}">
+          <div class="option-head">
+            <div>${isRecommended ? '<span class="recommended-badge">Recommended</span>' : ""}</div>
+            <div class="prob">${Math.round(opt.completion_probability * 100)}%</div>
+          </div>
+          <div class="option-summary">${opt.summary}</div>
+          <button class="why-toggle">WHY?</button>
+          <div class="why-box">${opt.breakdown}</div>
+          <ul class="action-list">${actionsHtml}</ul>
+          <div class="option-actions">
+            <button class="execute-btn">Execute adaptation</button>
+            <button class="reject-btn secondary">Reject</button>
+          </div>
+          <div class="execution-result"></div>
+        </div>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = `
+    <h2>${proposal.change_summary}</h2>
+    ${conflictHtml}
+    <div class="reasoning">${proposal.reasoning}</div>
+    ${optionsHtml}
+  `;
+
+  container.querySelectorAll(".why-toggle").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      btn.nextElementSibling.classList.toggle("open");
+    });
+  });
+
+  container.querySelectorAll(".option-card").forEach((card) => {
+    const optionId = card.dataset.optionId;
+
+    card.querySelector(".execute-btn").addEventListener("click", async (e) => {
+      const btn = e.target;
+      btn.disabled = true;
+      btn.textContent = "Executing...";
+      try {
+        const result = await executeOption(optionId, proposal);
+        card.querySelector(".execution-result").innerHTML = `
+          <ul>${result.results.map((r) => `<li>${r.applied ? "✅" : "🚫"} ${r.detail}</li>`).join("")}</ul>
+        `;
+        card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+        btn.textContent = "Executed";
+        if (onExecuted) onExecuted(result.state);
+      } catch (err) {
+        btn.textContent = "Failed -- try again";
+        btn.disabled = false;
+      }
+    });
+
+    card.querySelector(".reject-btn").addEventListener("click", async (e) => {
+      await sendFeedback(optionId, false, proposal);
+      e.target.disabled = true;
+      e.target.textContent = "Noted";
+      card.querySelector(".execute-btn").disabled = true;
+    });
+  });
+}
+
+function describeAction(a) {
+  if (a.type === "block_study_time") return `Block ${a.day} ${a.start}-${a.end} for focused work`;
+  if (a.type === "move_event") return `Move an item to ${a.to_day}${a.to_start ? " " + a.to_start : ""}`;
+  if (a.type === "draft_message") return `Draft a message to ${a.recipient}`;
+  return a.type;
 }
