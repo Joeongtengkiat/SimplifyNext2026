@@ -115,11 +115,72 @@ async function scheduleEvent(day, start, end, title, type) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Category colors -- the backend assigns each event a topic (academic/career/social/health/
+// personal/other, see backend/categorize.py); color is purely a display preference, so it's
+// owned entirely client-side and persisted in localStorage rather than round-tripping to the
+// server just to change a swatch.
+// ---------------------------------------------------------------------------------------------
+
+const DEFAULT_CATEGORY_COLORS = {
+  academic: "#3b82f6", // blue
+  career: "#dc2626", // red
+  social: "#a855f7", // purple
+  health: "#16a34a", // green
+  personal: "#f59e0b", // amber
+  other: "#6b7280", // gray
+};
+const CATEGORY_COLORS_KEY = "adapt_category_colors";
+
+function getCategoryColors() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(CATEGORY_COLORS_KEY) || "{}");
+    return { ...DEFAULT_CATEGORY_COLORS, ...stored };
+  } catch {
+    return { ...DEFAULT_CATEGORY_COLORS };
+  }
+}
+
+function setCategoryColor(category, hex) {
+  const colors = getCategoryColors();
+  colors[category] = hex;
+  try {
+    localStorage.setItem(CATEGORY_COLORS_KEY, JSON.stringify(colors));
+  } catch {
+    // private-browsing / storage-blocked -- the color just won't persist across reloads
+  }
+}
+
+function categoryColor(category) {
+  const colors = getCategoryColors();
+  return colors[category] || colors.other;
+}
+
+function renderCategoryLegend(container, state) {
+  const categoriesInUse = [...new Set(state.schedule.map((i) => i.category || "other"))].sort();
+  container.innerHTML = categoriesInUse
+    .map(
+      (cat) => `<label class="legend-swatch">
+        <input type="color" data-cat="${cat}" value="${categoryColor(cat)}" />
+        <span>${cat}</span>
+      </label>`
+    )
+    .join("");
+
+  container.querySelectorAll('input[type="color"]').forEach((input) => {
+    input.addEventListener("input", () => {
+      setCategoryColor(input.dataset.cat, input.value);
+      renderCurrentView();
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
 // Calendar views
 // ---------------------------------------------------------------------------------------------
 
 function itemBlockHtml(item) {
-  return `<div class="sched-item type-${item.type}">
+  const color = categoryColor(item.category || "other");
+  return `<div class="sched-item" style="border-left-color: ${color}">
     <span class="time">${item.start}-${item.end}</span>
     <span class="title">${item.title}</span>
   </div>`;
@@ -161,7 +222,7 @@ function renderMonthView(container, state, monthDate) {
     const isToday = stripTime(d).getTime() === stripTime(new Date()).getTime();
     cells += `<div class="month-cell ${isToday ? "today" : ""}">
       <div class="month-cell-num">${day}</div>
-      ${items.slice(0, 2).map((i) => `<div class="month-dot" title="${i.title}">${i.title}</div>`).join("")}
+      ${items.slice(0, 2).map((i) => `<div class="month-dot" style="background: ${categoryColor(i.category || "other")}" title="${i.title}">${i.title}</div>`).join("")}
       ${items.length > 2 ? `<div class="month-more">+${items.length - 2} more</div>` : ""}
     </div>`;
   }

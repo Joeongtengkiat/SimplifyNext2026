@@ -12,9 +12,11 @@ class ScheduleItem(BaseModel):
     start: str  # "HH:MM"
     end: str  # "HH:MM"
     title: str
-    type: str  # class | meeting | personal | interview | ...
+    type: str  # class | meeting | personal | interview | ... (structural kind)
     movable: bool
     protected: bool = False  # user has historically resisted moving this
+    category: str = ""  # topic for color-coding (academic/career/social/health/personal) --
+    # always recomputed on load by backend.categorize, never trust a stale stored value
 
 
 class Task(BaseModel):

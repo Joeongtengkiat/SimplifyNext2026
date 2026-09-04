@@ -16,6 +16,7 @@
 <div class="container">
   <div class="card">
     <h2>Alex's calendar</h2>
+    <div id="category-legend" class="category-legend"></div>
     <div class="view-toggle">
       <button data-view="day" class="active">Day</button>
       <button data-view="week">Week</button>
@@ -59,6 +60,7 @@
 <script src="app.js"></script>
 <script>
   const calendarViewEl = document.getElementById("calendar-view");
+  const categoryLegendEl = document.getElementById("category-legend");
   const rangePickerEl = document.getElementById("range-picker");
   const rangeStartEl = document.getElementById("range-start");
   const rangeEndEl = document.getElementById("range-end");
@@ -77,6 +79,7 @@
 
   async function refreshCalendar() {
     latestState = await fetchState();
+    renderCategoryLegend(categoryLegendEl, latestState);
     renderCurrentView();
   }
 

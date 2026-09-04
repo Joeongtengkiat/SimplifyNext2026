@@ -113,6 +113,12 @@ On top of the change-adaptation loop, a separate lightweight agent (`backend/que
 - The frontend calendar (Day/Week/Month/Year/Custom-range toggle) anchors the seed's `Mon`.."Sun" labels to the current real-world week, so Month/Year render as genuine date grids — only that one week has data, same as any freshly-started calendar app.
 - **One chat room, not two input boxes.** Both capabilities are reached through a single conversational thread (`POST /chat`) rather than separate "report a change" and "ask a question" forms. A deterministic classifier (`backend/intent.py` — question marks / "which day" / "what time" / "free for" style markers, zero AWS cost) routes each message to whichever agent actually handles it; the two agents themselves stay separate underneath, since they're solving genuinely different problems. A query response's slot-picker renders inline in the chat bubble — click a free slot, adjust the exact start/end, name it, and it's written back to `world_state` via `POST /schedule-event`. The calendar itself stays as a separate panel next to the chat, since it's a live state view rather than a conversation turn.
 
+### Automatic topic color-coding
+
+Every schedule item gets a `category` (academic/career/social/health/personal), assigned by a deterministic keyword classifier (`backend/categorize.py`) that runs on every load and save in `world_state.py` — covers seed items, adaptation-generated study blocks, and user-added events alike without needing to remember to categorize at every call site. It's a real, disclosed limitation of pure keyword matching that something like "coffee with advisor" lands as "social" instead of "academic" — a context-aware LLM call could do better, but would cost an AWS round-trip on every single event creation, which isn't worth it for a topic label.
+
+**Color is a display preference, not data** — it's owned entirely client-side (`localStorage`, `adapt_category_colors`), not round-tripped to the backend. The calendar shows a color-swatch legend per category in use; click a swatch to open a native color picker and the whole calendar re-renders with the new color immediately. This is the deliberate split: the backend decides *what topic* an event is (data, needs to be consistent), the frontend decides *what color represents that topic for this viewer* (personal preference, no reason to touch the server).
+
 ---
 
 ## 4. Bounded autonomy (the credibility mechanism)

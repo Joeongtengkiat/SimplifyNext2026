@@ -95,6 +95,7 @@ h2 {
   background: #f8f9fc;
   font-size: 12.5px;
   margin-bottom: 4px;
+  border-left: 3px solid #ccc; /* overridden inline per item's category color -- see app.js categoryColor() */
 }
 
 .sched-item .time {
@@ -108,11 +109,36 @@ h2 {
   font-weight: 500;
 }
 
-.sched-item.type-class { border-left: 3px solid #6366f1; }
-.sched-item.type-meeting { border-left: 3px solid #f59e0b; }
-.sched-item.type-personal { border-left: 3px solid #10b981; }
-.sched-item.type-interview { border-left: 3px solid #dc2626; }
-.sched-item.type-study { border-left: 3px solid var(--brand); }
+/* ---- category color legend ---- */
+
+.category-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.legend-swatch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+  text-transform: capitalize;
+  cursor: pointer;
+}
+
+.legend-swatch input[type="color"] {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  background: none;
+}
 
 textarea {
   width: 100%;
