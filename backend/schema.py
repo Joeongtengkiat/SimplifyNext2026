@@ -108,3 +108,39 @@ class FeedbackRequest(BaseModel):
     option_id: str
     approved: bool
     proposal: AdaptationProposal
+
+
+class FreeSlot(BaseModel):
+    day: str
+    start: str
+    end: str
+    duration_hours: float
+
+
+class RecommendedSlot(BaseModel):
+    day: str
+    start: str
+    end: str
+    reasoning: str
+
+
+class QueryResponse(BaseModel):
+    interpreted_start_day: str
+    interpreted_end_day: str
+    interpreted_min_duration_hours: float
+    free_slots: list[FreeSlot]
+    message: str
+    recommended_slot: RecommendedSlot | None = None
+    investigation_steps: int
+
+
+class QueryRequest(BaseModel):
+    query_text: str
+
+
+class ScheduleEventRequest(BaseModel):
+    day: str
+    start: str
+    end: str
+    title: str
+    type: str = "personal"

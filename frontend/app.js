@@ -1,44 +1,69 @@
 const API_BASE = "http://localhost:8000";
 const DAY_ORDER = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-const STEP_LABEL = {
-  detect_conflicts: "Checked schedule conflicts",
-  score_option: "Scored a candidate plan",
-};
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+const STEP_LABEL = { detect_conflicts: "Checked schedule conflicts", score_option: "Scored a candidate plan", find_free_slots: "Checked free time" };
 
 let currentProposal = null;
+let currentQueryResponse = null;
 
-function renderSchedule(container, state) {
-  const byDay = {};
-  for (const day of DAY_ORDER) byDay[day] = [];
-  for (const item of state.schedule) {
-    if (byDay[item.day]) byDay[item.day].push(item);
-  }
+// ---------------------------------------------------------------------------------------------
+// The seed data only knows "Mon".."Sun" (day-of-week labels, no real dates) -- to show a real
+// Day/Month/Year calendar we anchor those labels to the current real-world week. This is
+// deliberate, not a hack: only that one week has data, same as any fresh calendar app.
+// ---------------------------------------------------------------------------------------------
 
-  container.innerHTML = DAY_ORDER.filter((d) => byDay[d].length)
-    .map((day) => {
-      const items = byDay[day]
-        .sort((a, b) => a.start.localeCompare(b.start))
-        .map(
-          (item) => `<div class="sched-item type-${item.type}">
-            <span class="time">${item.start}-${item.end}</span>
-            <span class="title">${item.title}</span>
-          </div>`
-        )
-        .join("");
-      return `<div class="day-group"><div class="day-label">${day}${day === state.today ? " (today)" : ""}</div>${items}</div>`;
-    })
-    .join("");
+function stripTime(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
 }
 
+function getAnchorMonday() {
+  const now = stripTime(new Date());
+  const day = now.getDay(); // 0=Sun..6=Sat
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + diffToMonday);
+  return monday;
+}
+
+const ANCHOR_MONDAY = getAnchorMonday();
+
+function dayLabelToDate(label) {
+  const idx = DAY_ORDER.indexOf(label);
+  const d = new Date(ANCHOR_MONDAY);
+  d.setDate(ANCHOR_MONDAY.getDate() + idx);
+  return d;
+}
+
+function dateToDayLabel(date) {
+  const diffDays = Math.round((stripTime(date) - ANCHOR_MONDAY) / 86400000);
+  return diffDays >= 0 && diffDays < 7 ? DAY_ORDER[diffDays] : null;
+}
+
+function fmtDate(date) {
+  return date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+function itemsForDate(state, date) {
+  const label = dateToDayLabel(date);
+  if (!label) return [];
+  return state.schedule.filter((i) => i.day === label).sort((a, b) => a.start.localeCompare(b.start));
+}
+
+// ---------------------------------------------------------------------------------------------
+// API calls
+// ---------------------------------------------------------------------------------------------
+
 async function fetchState() {
-  const resp = await fetch(`${API_BASE}/state`);
-  return resp.json();
+  return (await fetch(`${API_BASE}/state`)).json();
 }
 
 async function resetState() {
-  const resp = await fetch(`${API_BASE}/reset`, { method: "POST" });
-  return resp.json();
+  return (await fetch(`${API_BASE}/reset`, { method: "POST" })).json();
 }
 
 async function injectChange(changeText) {
@@ -69,10 +94,136 @@ async function sendFeedback(optionId, approved, proposal) {
   });
 }
 
+async function submitQuery(queryText) {
+  const resp = await fetch(`${API_BASE}/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query_text: queryText }),
+  });
+  if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+  return resp.json();
+}
+
+async function scheduleEvent(day, start, end, title, type) {
+  const resp = await fetch(`${API_BASE}/schedule-event`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ day, start, end, title, type }),
+  });
+  if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+  return resp.json();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Calendar views
+// ---------------------------------------------------------------------------------------------
+
+function itemBlockHtml(item) {
+  return `<div class="sched-item type-${item.type}">
+    <span class="time">${item.start}-${item.end}</span>
+    <span class="title">${item.title}</span>
+  </div>`;
+}
+
+function renderDayView(container, state, date) {
+  const items = itemsForDate(state, date);
+  container.innerHTML = `
+    <div class="cal-day-label">${fmtDate(date)}</div>
+    ${items.length ? items.map(itemBlockHtml).join("") : '<div class="empty-note">Nothing scheduled.</div>'}
+  `;
+}
+
+function renderWeekView(container, state, startDate) {
+  const cols = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(startDate);
+    d.setDate(startDate.getDate() + i);
+    const items = itemsForDate(state, d);
+    return `<div class="week-col">
+      <div class="week-col-label">${d.toLocaleDateString(undefined, { weekday: "short" })}<br/><span>${d.getDate()}</span></div>
+      ${items.map(itemBlockHtml).join("")}
+    </div>`;
+  }).join("");
+  container.innerHTML = `<div class="week-grid">${cols}</div>`;
+}
+
+function renderMonthView(container, state, monthDate) {
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const firstOfMonth = new Date(year, month, 1);
+  const startOffset = (firstOfMonth.getDay() + 6) % 7; // Monday-first grid
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  let cells = "";
+  for (let i = 0; i < startOffset; i++) cells += `<div class="month-cell empty"></div>`;
+  for (let day = 1; day <= daysInMonth; day++) {
+    const d = new Date(year, month, day);
+    const items = itemsForDate(state, d);
+    const isToday = stripTime(d).getTime() === stripTime(new Date()).getTime();
+    cells += `<div class="month-cell ${isToday ? "today" : ""}">
+      <div class="month-cell-num">${day}</div>
+      ${items.slice(0, 2).map((i) => `<div class="month-dot" title="${i.title}">${i.title}</div>`).join("")}
+      ${items.length > 2 ? `<div class="month-more">+${items.length - 2} more</div>` : ""}
+    </div>`;
+  }
+
+  container.innerHTML = `
+    <div class="cal-title">${MONTH_NAMES[month]} ${year}</div>
+    <div class="month-grid-header">${["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d) => `<div>${d}</div>`).join("")}</div>
+    <div class="month-grid">${cells}</div>
+  `;
+}
+
+function renderYearView(container, state, year) {
+  let months = "";
+  for (let m = 0; m < 12; m++) {
+    const firstOfMonth = new Date(year, m, 1);
+    const startOffset = (firstOfMonth.getDay() + 6) % 7;
+    const daysInMonth = new Date(year, m + 1, 0).getDate();
+    let cells = "";
+    for (let i = 0; i < startOffset; i++) cells += `<div class="mini-cell empty"></div>`;
+    for (let day = 1; day <= daysInMonth; day++) {
+      const d = new Date(year, m, day);
+      const hasItems = itemsForDate(state, d).length > 0;
+      cells += `<div class="mini-cell ${hasItems ? "has-events" : ""}">${day}</div>`;
+    }
+    months += `<div class="mini-month"><div class="mini-month-title">${MONTH_NAMES[m]}</div><div class="mini-grid">${cells}</div></div>`;
+  }
+  container.innerHTML = `<div class="cal-title">${year}</div><div class="year-grid">${months}</div>`;
+}
+
+function renderRangeView(container, state, startDate, endDate) {
+  const days = [];
+  const cursor = new Date(startDate);
+  while (cursor <= endDate && days.length < 31) {
+    days.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  const rows = days
+    .map((d) => {
+      const items = itemsForDate(state, d);
+      return `<div class="day-group"><div class="day-label">${fmtDate(d)}</div>${
+        items.length ? items.map(itemBlockHtml).join("") : '<div class="empty-note">Nothing scheduled.</div>'
+      }</div>`;
+    })
+    .join("");
+  container.innerHTML = rows || '<div class="empty-note">Pick a valid range.</div>';
+}
+
+// ---------------------------------------------------------------------------------------------
+// Reasoning trace + adaptation proposal (unchanged behavior, same as before)
+// ---------------------------------------------------------------------------------------------
+
 function renderSteps(container, steps) {
   container.innerHTML = steps
     .map((s) => `<div class="step"><b>${STEP_LABEL[s.tool] || s.tool}</b> — ${JSON.stringify(s.input)}</div>`)
     .join("");
+}
+
+function describeAction(a) {
+  if (a.type === "block_study_time") return `Block ${a.day} ${a.start}-${a.end} for focused work`;
+  if (a.type === "move_event") return `Move an item to ${a.to_day}${a.to_start ? " " + a.to_start : ""}`;
+  if (a.type === "draft_message") return `Draft a message to ${a.recipient}`;
+  return a.type;
 }
 
 function renderProposal(container, proposal, { onExecuted } = {}) {
@@ -91,10 +242,7 @@ function renderProposal(container, proposal, { onExecuted } = {}) {
     .map((opt) => {
       const isRecommended = opt.id === proposal.recommended_option_id;
       const actionsHtml = opt.actions
-        .map(
-          (a) =>
-            `<li><span class="tier-badge tier-${a.tier}">${a.tier}</span> ${describeAction(a)}</li>`
-        )
+        .map((a) => `<li><span class="tier-badge tier-${a.tier}">${a.tier}</span> ${describeAction(a)}</li>`)
         .join("");
       return `
         <div class="option-card ${isRecommended ? "recommended" : ""}" data-option-id="${opt.id}">
@@ -116,17 +264,10 @@ function renderProposal(container, proposal, { onExecuted } = {}) {
     })
     .join("");
 
-  container.innerHTML = `
-    <h2>${proposal.change_summary}</h2>
-    ${conflictHtml}
-    <div class="reasoning">${proposal.reasoning}</div>
-    ${optionsHtml}
-  `;
+  container.innerHTML = `<h2>${proposal.change_summary}</h2>${conflictHtml}<div class="reasoning">${proposal.reasoning}</div>${optionsHtml}`;
 
   container.querySelectorAll(".why-toggle").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      btn.nextElementSibling.classList.toggle("open");
-    });
+    btn.addEventListener("click", () => btn.nextElementSibling.classList.toggle("open"));
   });
 
   container.querySelectorAll(".option-card").forEach((card) => {
@@ -138,13 +279,13 @@ function renderProposal(container, proposal, { onExecuted } = {}) {
       btn.textContent = "Executing...";
       try {
         const result = await executeOption(optionId, proposal);
-        card.querySelector(".execution-result").innerHTML = `
-          <ul>${result.results.map((r) => `<li>${r.applied ? "✅" : "🚫"} ${r.detail}</li>`).join("")}</ul>
-        `;
+        card.querySelector(".execution-result").innerHTML = `<ul>${result.results
+          .map((r) => `<li>${r.applied ? "✅" : "🚫"} ${r.detail}</li>`)
+          .join("")}</ul>`;
         card.querySelectorAll("button").forEach((b) => (b.disabled = true));
         btn.textContent = "Executed";
         if (onExecuted) onExecuted(result.state);
-      } catch (err) {
+      } catch {
         btn.textContent = "Failed -- try again";
         btn.disabled = false;
       }
@@ -159,9 +300,78 @@ function renderProposal(container, proposal, { onExecuted } = {}) {
   });
 }
 
-function describeAction(a) {
-  if (a.type === "block_study_time") return `Block ${a.day} ${a.start}-${a.end} for focused work`;
-  if (a.type === "move_event") return `Move an item to ${a.to_day}${a.to_start ? " " + a.to_start : ""}`;
-  if (a.type === "draft_message") return `Draft a message to ${a.recipient}`;
-  return a.type;
+// ---------------------------------------------------------------------------------------------
+// Availability query + slot-picker overlay
+// ---------------------------------------------------------------------------------------------
+
+function renderSlotPicker(overlayEl, queryResponse, { onScheduled } = {}) {
+  currentQueryResponse = queryResponse;
+  const slots = queryResponse.free_slots;
+
+  const slotCards = slots
+    .map(
+      (s, i) => `<div class="slot-card" data-idx="${i}">
+        <div class="slot-day">${s.day}</div>
+        <div class="slot-time">${s.start} - ${s.end}</div>
+        <div class="slot-duration">${s.duration_hours}h free</div>
+      </div>`
+    )
+    .join("");
+
+  const recommendedHtml = queryResponse.recommended_slot
+    ? `<div class="recommended-note">💡 Recommended: <b>${queryResponse.recommended_slot.day} ${queryResponse.recommended_slot.start}-${queryResponse.recommended_slot.end}</b> — ${queryResponse.recommended_slot.reasoning}</div>`
+    : "";
+
+  overlayEl.innerHTML = `
+    <div class="modal">
+      <button class="modal-close">✕</button>
+      <h2>Available time</h2>
+      <p class="reasoning">${queryResponse.message}</p>
+      ${recommendedHtml}
+      <div class="slot-grid">${slotCards || '<div class="empty-note">No free slots matched.</div>'}</div>
+      <div id="slot-editor" style="display: none;"></div>
+    </div>
+  `;
+
+  overlayEl.querySelector(".modal-close").addEventListener("click", () => (overlayEl.style.display = "none"));
+
+  overlayEl.querySelectorAll(".slot-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      overlayEl.querySelectorAll(".slot-card").forEach((c) => c.classList.remove("selected"));
+      card.classList.add("selected");
+      const slot = slots[parseInt(card.dataset.idx, 10)];
+      renderSlotEditor(overlayEl.querySelector("#slot-editor"), slot, overlayEl, onScheduled);
+    });
+  });
+}
+
+function renderSlotEditor(container, slot, overlayEl, onScheduled) {
+  container.style.display = "block";
+  container.innerHTML = `
+    <div class="slot-editor-form">
+      <label>Day <input type="text" id="ed-day" value="${slot.day}" readonly /></label>
+      <label>Start <input type="time" id="ed-start" value="${slot.start}" /></label>
+      <label>End <input type="time" id="ed-end" value="${slot.end}" /></label>
+      <label>Title <input type="text" id="ed-title" placeholder="What is this?" /></label>
+      <button id="ed-confirm">Add to calendar</button>
+      <div id="ed-status"></div>
+    </div>
+  `;
+
+  container.querySelector("#ed-confirm").addEventListener("click", async () => {
+    const day = container.querySelector("#ed-day").value;
+    const start = container.querySelector("#ed-start").value;
+    const end = container.querySelector("#ed-end").value;
+    const title = container.querySelector("#ed-title").value.trim() || "Untitled";
+    const statusEl = container.querySelector("#ed-status");
+
+    try {
+      const state = await scheduleEvent(day, start, end, title, "personal");
+      statusEl.textContent = "Added to calendar.";
+      if (onScheduled) onScheduled(state);
+      setTimeout(() => (overlayEl.style.display = "none"), 700);
+    } catch (err) {
+      statusEl.textContent = `Failed: ${err.message}`;
+    }
+  });
 }

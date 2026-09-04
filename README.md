@@ -104,6 +104,14 @@ This mirrors the hackathon's own "Building Agents That Hold Up" guidance: build 
 
 `detect_conflicts` and `score_option` are plain Python, not model calls. The 87%-style completion-probability number in the demo has to come from a real, explainable formula (available hours vs. hours required, adjusted for the task's actual progress) — an LLM inventing a percentage that *sounds* right is exactly the kind of thing that falls apart under a judge's first follow-up question. The agent's job is deciding *which* options to generate and *how to explain* the numbers in plain language, grounded in what the tools actually returned — the same evidence-grounding pattern that worked well in the earlier build.
 
+### A second capability: natural-language availability queries
+
+On top of the change-adaptation loop, a separate lightweight agent (`backend/query_agent.py`) answers questions like *"which days am I free," "which periods am I free for more than 2 hours," "which days am I free between Monday and Friday,"* or *"what time should I go to the gym"* — grounded in the same `WorldState`.
+
+- **`find_free_slots`** (`backend/tools/find_free_slots.py`) is the deterministic engine: literal interval arithmetic over the schedule (merge busy intervals, subtract from a 07:00–23:00 waking window), fully testable without AWS. It's intentionally a *different* measure from `score_option`'s `daily_capacity_hours` (a conservative planning ceiling) — literal calendar gaps and "realistic deep-work capacity" can legitimately disagree, and that's fine as long as it's documented rather than silently confusing.
+- The agent's job is narrower than the adaptation loop: interpret the free-text question into a day range + minimum duration, call `find_free_slots`, and — for "what time should I do X" questions — recommend one of the *actual returned slots* with a reason. Same grounding-by-construction pattern: the server recomputes the slots from the interpreted range rather than trusting whatever the model said during the loop, and a recommended slot that doesn't match a real free slot is dropped with a warning, not silently kept.
+- The frontend calendar (Day/Week/Month/Year/Custom-range toggle) anchors the seed's `Mon`.."Sun" labels to the current real-world week, so Month/Year render as genuine date grids — only that one week has data, same as any freshly-started calendar app. Asking a question opens a slot-picker overlay: click a free slot, adjust the exact start/end, name it, and it's written back to `world_state` via `POST /schedule-event`.
+
 ---
 
 ## 4. Bounded autonomy (the credibility mechanism)
@@ -137,21 +145,27 @@ adapt/
 ├── requirements.txt
 ├── .env.example                  # AWS creds + BEDROCK_MODEL_ID
 ├── backend/
-│   ├── main.py                    # FastAPI: /state, /inject-change, /execute, /feedback, /reset
+│   ├── main.py                    # FastAPI: /state, /inject-change, /execute, /feedback, /reset,
+│   │                                # /query, /schedule-event
 │   ├── bedrock.py                  # boto3 Converse wrapper (generic, reused as-is)
-│   ├── agent.py                     # the reasoning loop: get_world_state -> detect_conflicts ->
-│   │                                 # score_option (per candidate) -> propose_adaptation
-│   ├── world_state.py                # loads/saves data/world_state.json, seeded from
-│   │                                   # data/world_state.seed.json; /reset restores the seed
+│   ├── agent.py                     # adaptation loop: detect_conflicts -> score_option (per
+│   │                                 # candidate) -> propose_adaptation
+│   ├── query_agent.py                # availability-query loop: find_free_slots -> answer_query
+│   ├── world_state.py                 # loads/saves data/world_state.json, seeded from
+│   │                                    # data/world_state.seed.json; /reset restores the seed
+│   ├── time_utils.py / capacity.py     # date/interval arithmetic shared by both agents' tools
 │   ├── tools/
-│   │   ├── detect_conflicts.py        # deterministic: remaining work vs. available capacity
-│   │   ├── score_option.py             # deterministic: completion-probability formula
-│   │   ├── apply_adaptation.py         # commits an approved plan, enforcing 🟢/🟡/🔴
-│   │   └── log_feedback.py              # the Learn step: nudges preference weights
-│   └── schema.py                     # Pydantic models for world state + the adaptation proposal
+│   │   ├── detect_conflicts.py         # deterministic: remaining work vs. available capacity
+│   │   ├── score_option.py              # deterministic: completion-probability formula
+│   │   ├── find_free_slots.py            # deterministic: literal schedule-gap interval arithmetic
+│   │   ├── apply_adaptation.py           # commits an approved plan, enforcing 🟢/🟡/🔴
+│   │   └── log_feedback.py                # the Learn step: nudges preference weights
+│   └── schema.py                     # Pydantic models for world state, the adaptation proposal,
+│                                       # and the availability-query response
 ├── frontend/
-│   ├── index.html                  # Before/After schedule view, Inject Change, WHY-expandable
-│   ├── style.css                    # proposal card, tool badges (see PhishTrace's for the look)
+│   ├── index.html                  # calendar (Day/Week/Month/Year/Range), Inject Change,
+│   │                                # availability query box, slot-picker modal
+│   ├── style.css
 │   └── app.js
 └── data/
     └── world_state.seed.json      # Alex's schedule/tasks/preferences -- the demo scenario

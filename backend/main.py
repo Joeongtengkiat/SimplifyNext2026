@@ -7,7 +7,15 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from backend import world_state  # noqa: E402
 from backend.agent import run_adaptation  # noqa: E402
-from backend.schema import ExecuteRequest, FeedbackRequest, InjectChangeRequest  # noqa: E402
+from backend.query_agent import run_query  # noqa: E402
+from backend.schema import (  # noqa: E402
+    ExecuteRequest,
+    FeedbackRequest,
+    InjectChangeRequest,
+    QueryRequest,
+    ScheduleEventRequest,
+    ScheduleItem,
+)
 from backend.tools.apply_adaptation import apply_adaptation  # noqa: E402
 from backend.tools.log_feedback import log_feedback  # noqa: E402
 
@@ -65,3 +73,31 @@ def feedback(req: FeedbackRequest) -> dict:
     log_feedback(state, option.actions, approved=req.approved)
     world_state.save(state)
     return {"acknowledged": True, "preferences": state.preferences}
+
+
+@app.post("/query")
+def query(req: QueryRequest) -> dict:
+    state = world_state.load()
+    return run_query(req.query_text, state)
+
+
+_next_event_id = [0]
+
+
+@app.post("/schedule-event")
+def schedule_event(req: ScheduleEventRequest) -> dict:
+    state = world_state.load()
+    _next_event_id[0] += 1
+    state.schedule.append(
+        ScheduleItem(
+            id=f"user{_next_event_id[0]}",
+            day=req.day,
+            start=req.start,
+            end=req.end,
+            title=req.title,
+            type=req.type,
+            movable=True,
+        )
+    )
+    world_state.save(state)
+    return state.model_dump()

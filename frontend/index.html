@@ -8,20 +8,44 @@
 <body>
 <div class="banner">
   <div class="container">
-    <header>
-      <h1>ADAPT</h1>
-    </header>
+    <header><h1>ADAPT</h1></header>
     <p class="tagline">"Your life changed 30 seconds ago."</p>
   </div>
 </div>
 
 <div class="container">
   <div class="card">
-    <h2>Alex's week</h2>
-    <div id="schedule"></div>
+    <h2>Alex's calendar</h2>
+    <div class="view-toggle">
+      <button data-view="day" class="active">Day</button>
+      <button data-view="week">Week</button>
+      <button data-view="month">Month</button>
+      <button data-view="year">Year</button>
+      <button data-view="range">Custom range</button>
+    </div>
+    <div id="range-picker" class="range-picker" style="display: none;">
+      <input type="date" id="range-start" />
+      <span>to</span>
+      <input type="date" id="range-end" />
+    </div>
+    <div id="calendar-view"></div>
     <div class="actions">
       <button id="reset-btn" class="secondary">Reset demo</button>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>Ask about your time</h2>
+    <div class="query-input">
+      <input id="query-text" type="text" placeholder="e.g. which days am I free for more than 2 hours?" />
+      <button id="query-btn">Ask</button>
+    </div>
+    <div class="query-suggestions">
+      <button data-q="Which days am I free this week?">Which days am I free?</button>
+      <button data-q="Which periods am I free for more than 2 hours?">Free for 2+ hours?</button>
+      <button data-q="What time should I go to the gym?">What time for the gym?</button>
+    </div>
+    <span id="query-status"></span>
   </div>
 
   <div class="card">
@@ -41,9 +65,14 @@
   <div id="proposal-card" class="card" style="display: none;"></div>
 </div>
 
+<div id="modal-overlay"></div>
+
 <script src="app.js"></script>
 <script>
-  const scheduleEl = document.getElementById("schedule");
+  const calendarViewEl = document.getElementById("calendar-view");
+  const rangePickerEl = document.getElementById("range-picker");
+  const rangeStartEl = document.getElementById("range-start");
+  const rangeEndEl = document.getElementById("range-end");
   const stepsCardEl = document.getElementById("steps-card");
   const stepsEl = document.getElementById("steps");
   const proposalCardEl = document.getElementById("proposal-card");
@@ -51,11 +80,71 @@
   const injectBtn = document.getElementById("inject-btn");
   const resetBtn = document.getElementById("reset-btn");
   const changeInput = document.getElementById("change-input");
+  const queryTextEl = document.getElementById("query-text");
+  const queryBtn = document.getElementById("query-btn");
+  const queryStatusEl = document.getElementById("query-status");
+  const modalOverlay = document.getElementById("modal-overlay");
 
-  async function refreshSchedule() {
-    const state = await fetchState();
-    renderSchedule(scheduleEl, state);
+  let currentView = "day";
+  let latestState = null;
+  // the demo's populated day is the persona's "today" (Mon), which may not be the real-world
+  // date -- Day view opens there, not on whatever the real calendar date happens to be
+  let currentDay = new Date(ANCHOR_MONDAY);
+
+  function todayISO(date) {
+    return date.toISOString().slice(0, 10);
   }
+
+  async function refreshCalendar() {
+    latestState = await fetchState();
+    renderCurrentView();
+  }
+
+  function renderCurrentView() {
+    if (!latestState) return;
+    if (currentView === "day") renderDayViewWithNav();
+    else if (currentView === "week") renderWeekView(calendarViewEl, latestState, ANCHOR_MONDAY);
+    else if (currentView === "month") renderMonthView(calendarViewEl, latestState, currentDay);
+    else if (currentView === "year") renderYearView(calendarViewEl, latestState, currentDay.getFullYear());
+    else if (currentView === "range") {
+      const start = rangeStartEl.value ? new Date(rangeStartEl.value) : ANCHOR_MONDAY;
+      const end = rangeEndEl.value ? new Date(rangeEndEl.value) : new Date(ANCHOR_MONDAY.getTime() + 6 * 86400000);
+      renderRangeView(calendarViewEl, latestState, start, end);
+    }
+  }
+
+  function renderDayViewWithNav() {
+    renderDayView(calendarViewEl, latestState, currentDay);
+    const nav = document.createElement("div");
+    nav.className = "day-nav";
+    nav.innerHTML = `<button id="day-prev" class="secondary">← Prev</button><button id="day-next" class="secondary">Next →</button>`;
+    calendarViewEl.appendChild(nav);
+    document.getElementById("day-prev").addEventListener("click", () => {
+      currentDay.setDate(currentDay.getDate() - 1);
+      renderDayViewWithNav();
+    });
+    document.getElementById("day-next").addEventListener("click", () => {
+      currentDay.setDate(currentDay.getDate() + 1);
+      renderDayViewWithNav();
+    });
+  }
+
+  document.querySelectorAll(".view-toggle button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".view-toggle button").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentView = btn.dataset.view;
+      rangePickerEl.style.display = currentView === "range" ? "flex" : "none";
+      if (currentView === "range" && !rangeStartEl.value) {
+        rangeStartEl.value = todayISO(ANCHOR_MONDAY);
+        rangeEndEl.value = todayISO(new Date(ANCHOR_MONDAY.getTime() + 6 * 86400000));
+      }
+      renderCurrentView();
+    });
+  });
+
+  rangeStartEl.addEventListener("change", renderCurrentView);
+  rangeEndEl.addEventListener("change", renderCurrentView);
 
   injectBtn.addEventListener("click", async () => {
     const text = changeInput.value.trim();
@@ -78,7 +167,7 @@
 
       statusEl.textContent = "";
       proposalCardEl.style.display = "block";
-      renderProposal(proposalCardEl, data.proposal, { onExecuted: refreshSchedule });
+      renderProposal(proposalCardEl, data.proposal, { onExecuted: refreshCalendar });
     } catch (err) {
       statusEl.textContent = `Error: ${err.message}. Is the backend running (uvicorn backend.main:app)?`;
     } finally {
@@ -86,15 +175,50 @@
     }
   });
 
+  async function runQuery(text) {
+    if (!text) return;
+    queryStatusEl.innerHTML = `<span class="spinner"></span>Checking your schedule...`;
+    queryBtn.disabled = true;
+    try {
+      const data = await submitQuery(text);
+      queryStatusEl.textContent = "";
+      if (!data.query_response) {
+        queryStatusEl.textContent = "Couldn't answer that -- see warnings.";
+        return;
+      }
+      modalOverlay.style.display = "flex";
+      renderSlotPicker(modalOverlay, data.query_response, { onScheduled: refreshCalendar });
+    } catch (err) {
+      queryStatusEl.textContent = `Error: ${err.message}`;
+    } finally {
+      queryBtn.disabled = false;
+    }
+  }
+
+  queryBtn.addEventListener("click", () => runQuery(queryTextEl.value.trim()));
+  queryTextEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") runQuery(queryTextEl.value.trim());
+  });
+  document.querySelectorAll(".query-suggestions button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      queryTextEl.value = btn.dataset.q;
+      runQuery(btn.dataset.q);
+    });
+  });
+
+  modalOverlay.addEventListener("click", (e) => {
+    if (e.target === modalOverlay) modalOverlay.style.display = "none";
+  });
+
   resetBtn.addEventListener("click", async () => {
-    const state = await resetState();
-    renderSchedule(scheduleEl, state);
+    await resetState();
     stepsCardEl.style.display = "none";
     proposalCardEl.style.display = "none";
     statusEl.textContent = "";
+    refreshCalendar();
   });
 
-  refreshSchedule();
+  refreshCalendar();
 </script>
 </body>
 </html>
