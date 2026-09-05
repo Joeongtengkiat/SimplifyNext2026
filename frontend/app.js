@@ -163,11 +163,56 @@ function itemBlockHtml(item) {
   </div>`;
 }
 
+const DAY_TIMELINE_START_HOUR = 7; // matches the backend's find_free_slots waking window (07:00-23:00)
+const DAY_TIMELINE_END_HOUR = 23;
+const DAY_TIMELINE_PX_PER_HOUR = 48;
+
+function timeToTimelineOffset(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  return (h - DAY_TIMELINE_START_HOUR) * DAY_TIMELINE_PX_PER_HOUR + (m / 60) * DAY_TIMELINE_PX_PER_HOUR;
+}
+
 function renderDayView(container, state, date) {
   const items = itemsForDate(state, date);
+  const totalHeight = (DAY_TIMELINE_END_HOUR - DAY_TIMELINE_START_HOUR) * DAY_TIMELINE_PX_PER_HOUR;
+
+  const hourLabels = [];
+  for (let h = DAY_TIMELINE_START_HOUR; h <= DAY_TIMELINE_END_HOUR; h++) {
+    const top = (h - DAY_TIMELINE_START_HOUR) * DAY_TIMELINE_PX_PER_HOUR;
+    hourLabels.push(`<div class="hour-label" style="top: ${top}px">${String(h).padStart(2, "0")}:00</div>`);
+  }
+
+  const blocks = items
+    .map((item) => {
+      const top = timeToTimelineOffset(item.start);
+      const height = Math.max(22, timeToTimelineOffset(item.end) - top);
+      const color = categoryColor(item.category || "other");
+      return `<div class="timeline-block" style="top: ${top}px; height: ${height}px; border-left-color: ${color}">
+        <div class="timeline-block-title">${item.title}</div>
+        <div class="timeline-block-time">${item.start}-${item.end}</div>
+      </div>`;
+    })
+    .join("");
+
+  const isToday = stripTime(date).getTime() === stripTime(new Date()).getTime();
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const nowInWindow = nowMinutes >= DAY_TIMELINE_START_HOUR * 60 && nowMinutes <= DAY_TIMELINE_END_HOUR * 60;
+  const nowLine =
+    isToday && nowInWindow
+      ? `<div class="now-line" style="top: ${((nowMinutes - DAY_TIMELINE_START_HOUR * 60) / 60) * DAY_TIMELINE_PX_PER_HOUR}px"></div>`
+      : "";
+
   container.innerHTML = `
     <div class="cal-day-label">${fmtDate(date)}</div>
-    ${items.length ? items.map(itemBlockHtml).join("") : '<div class="empty-note">Nothing scheduled.</div>'}
+    <div class="day-timeline-wrap" style="height: ${totalHeight}px">
+      ${hourLabels.join("")}
+      <div class="day-timeline" style="height: ${totalHeight}px">
+        ${blocks}
+        ${nowLine}
+      </div>
+    </div>
+    ${items.length ? "" : '<div class="empty-note">Nothing scheduled.</div>'}
   `;
 }
 

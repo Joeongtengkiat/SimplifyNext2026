@@ -8,51 +8,59 @@
 <body>
 <div class="banner">
   <div class="container">
-    <header><h1>ADAPT</h1></header>
+    <header>
+      <span class="logo-mark">◆</span>
+      <h1>ADAPT</h1>
+    </header>
     <p class="tagline">"Your life changed 30 seconds ago."</p>
   </div>
 </div>
 
-<div class="container">
-  <div class="card">
-    <h2>Alex's calendar</h2>
-    <div id="category-legend" class="category-legend"></div>
-    <div class="view-toggle">
-      <button data-view="day" class="active">Day</button>
-      <button data-view="week">Week</button>
-      <button data-view="month">Month</button>
-      <button data-view="year">Year</button>
-      <button data-view="range">Custom range</button>
-    </div>
-    <div id="range-picker" class="range-picker" style="display: none;">
-      <input type="date" id="range-start" />
-      <span>to</span>
-      <input type="date" id="range-end" />
-    </div>
-    <div id="calendar-view"></div>
-    <div class="actions">
-      <button id="reset-btn" class="secondary">Reset demo</button>
+<div class="container app-layout">
+  <div class="calendar-col">
+    <div class="card">
+      <h2>Alex's calendar</h2>
+      <div id="category-legend" class="category-legend"></div>
+      <div class="view-toggle">
+        <button data-view="day" class="active">Day</button>
+        <button data-view="week">Week</button>
+        <button data-view="month">Month</button>
+        <button data-view="year">Year</button>
+        <button data-view="range">Custom range</button>
+      </div>
+      <div id="range-picker" class="range-picker" style="display: none;">
+        <input type="date" id="range-start" />
+        <span>to</span>
+        <input type="date" id="range-end" />
+      </div>
+      <div id="calendar-view"></div>
+      <div class="actions">
+        <button id="reset-btn" class="secondary">Reset demo</button>
+      </div>
     </div>
   </div>
 
-  <div class="card chat-card">
-    <h2>Chat with ADAPT</h2>
-    <div id="chat-thread">
-      <div class="chat-msg agent">
-        <div class="bubble">
-          Tell me what changed ("Marketing assignment deadline moved from Friday to Tuesday"), or
-          ask about your free time ("which days am I free for more than 2 hours?").
+  <div class="chat-col">
+    <div class="card chat-card">
+      <h2>Chat with ADAPT</h2>
+      <div id="chat-thread">
+        <div class="chat-msg agent">
+          <div class="avatar agent-avatar">◆</div>
+          <div class="bubble">
+            Tell me what changed ("Marketing assignment deadline moved from Friday to Tuesday"), or
+            ask about your free time ("which days am I free for more than 2 hours?").
+          </div>
         </div>
       </div>
-    </div>
-    <div class="query-suggestions">
-      <button data-q="Marketing assignment deadline moved from Friday to Tuesday">Deadline moved up</button>
-      <button data-q="Which days am I free for more than 2 hours?">Free for 2+ hours?</button>
-      <button data-q="What time should I go to the gym?">What time for the gym?</button>
-    </div>
-    <div class="chat-input-row">
-      <input id="chat-input" type="text" placeholder="Tell ADAPT what changed, or ask about your time..." />
-      <button id="chat-send">Send</button>
+      <div class="query-suggestions">
+        <button data-q="Marketing assignment deadline moved from Friday to Tuesday">Deadline moved up</button>
+        <button data-q="Which days am I free for more than 2 hours?">Free for 2+ hours?</button>
+        <button data-q="What time should I go to the gym?">What time for the gym?</button>
+      </div>
+      <div class="chat-input-row">
+        <input id="chat-input" type="text" placeholder="Tell ADAPT what changed, or ask about your time..." />
+        <button id="chat-send">Send</button>
+      </div>
     </div>
   </div>
 </div>
@@ -131,7 +139,12 @@
 
   resetBtn.addEventListener("click", async () => {
     await resetState();
-    chatThreadEl.innerHTML = "";
+    chatThreadEl.innerHTML = `
+      <div class="chat-msg agent">
+        <div class="avatar agent-avatar">◆</div>
+        <div class="bubble">Demo reset. Tell me what changed, or ask about your free time.</div>
+      </div>
+    `;
     refreshCalendar();
   });
 
@@ -153,7 +166,7 @@
   function appendAgentMessage() {
     const div = document.createElement("div");
     div.className = "chat-msg agent";
-    div.innerHTML = `<div class="bubble"></div>`;
+    div.innerHTML = `<div class="avatar agent-avatar">◆</div><div class="bubble"></div>`;
     chatThreadEl.appendChild(div);
     scrollChatToBottom();
     return div.querySelector(".bubble");
