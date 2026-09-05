@@ -3,7 +3,7 @@
 An agent that senses a change in your world, reasons about which of your existing commitments it actually affects, predicts the consequences of different responses, and proposes — never silently executes — the best next move. Every recommendation comes with a **WHY**: the actual numbers behind it, not a vibe.
 
 **Event:** IGNITE Agentic AI Hackathon 2026 (SimplifyNext)
-**Today:** 2026-09-04. Submission ~2026-09-07 — **confirm the exact cutoff with the team.**
+**Today:** 2026-09-05. Submission ~2026-09-07 — **confirm the exact cutoff with the team.**
 **Platform:** AWS sandbox account, `us-east-1` only (see constraints below).
 
 This replaces the earlier PhishTrace concept (a phishing-investigation agent) — full history is still in git if it's ever useful, but the team has pivoted. Everything below is the current direction.
@@ -53,11 +53,17 @@ This mirrors the hackathon's own "Building Agents That Hold Up" guidance: build 
 ## 3. Architecture
 
 ```
+                    One chat box — POST /chat
                     "Marketing assignment deadline moved
                      from Friday to Tuesday" (typed in, or
                      a demo button — stands in for a real
                      Canvas/email webhook)
                               │
+                              ▼
+                    ┌───────────────────┐
+                    │  classify_intent   │  deterministic keyword router
+                    │  (backend/intent)  │  (no model call) — a question goes
+                    └─────────┬──────────┘  to the availability agent instead
                               ▼
                     ┌───────────────────┐
                     │   SENSE            │  raw change event (free text)
@@ -139,8 +145,13 @@ Same reasoning as before: Claude Haiku 4.5 is the hackathon's own recommended de
 
 | Job | Model | Bedrock model ID |
 |---|---|---|
-| Agent loop (tool use, Converse API) | Claude Haiku 4.5 | `us.anthropic.claude-haiku-4-5-v1:0` |
-| Escalation for low-confidence proposals *(optional, reuse the earlier pattern)* | Claude Sonnet | confirm exact ID in the Bedrock console |
+| Adaptation loop (`agent.py`, Converse tool use) | Claude Haiku 4.5 | `us.anthropic.claude-haiku-4-5-v1:0` |
+| Availability-query loop (`query_agent.py`) | Claude Haiku 4.5 | same — both read `BEDROCK_MODEL_ID` from the env |
+| Escalation for low-confidence proposals *(discussed, not built)* | Claude Sonnet | confirm exact ID in the Bedrock console |
+
+**Verify the Haiku model ID before rehearsing** — `aws bedrock list-inference-profiles --region us-east-1 | grep haiku`. The ID above is only what `backend/bedrock.py` falls back to when `BEDROCK_MODEL_ID` is unset; if it's wrong, every Bedrock call fails — and the first Bedrock call in this repo has not happened yet (see §8). Override it in `.env`, not in code.
+
+Token usage from every call is appended to `data/usage_log.jsonl` by `bedrock._log_usage`, so spend stays visible against the $20 cutoff.
 
 ---
 
@@ -152,15 +163,18 @@ adapt/
 ├── requirements.txt
 ├── .env.example                  # AWS creds + BEDROCK_MODEL_ID
 ├── backend/
-│   ├── main.py                    # FastAPI: /state, /inject-change, /execute, /feedback, /reset,
-│   │                                # /query, /schedule-event
+│   ├── main.py                    # FastAPI: /chat (the only one the UI calls), /state, /reset,
+│   │                                # /execute, /feedback, /schedule-event, /health — plus
+│   │                                # /inject-change and /query, direct access to each agent
 │   ├── bedrock.py                  # boto3 Converse wrapper (generic, reused as-is)
 │   ├── agent.py                     # adaptation loop: detect_conflicts -> score_option (per
 │   │                                 # candidate) -> propose_adaptation
 │   ├── query_agent.py                # availability-query loop: find_free_slots -> answer_query
 │   ├── world_state.py                 # loads/saves data/world_state.json, seeded from
 │   │                                    # data/world_state.seed.json; /reset restores the seed
-│   ├── time_utils.py / capacity.py     # date/interval arithmetic shared by both agents' tools
+│   ├── intent.py                        # keyword router behind /chat — which agent handles this
+│   ├── categorize.py                     # keyword topic labels, re-derived on every load/save
+│   ├── time_utils.py / capacity.py        # date/interval arithmetic shared by both agents' tools
 │   ├── tools/
 │   │   ├── detect_conflicts.py         # deterministic: remaining work vs. available capacity
 │   │   ├── score_option.py              # deterministic: completion-probability formula
@@ -170,69 +184,115 @@ adapt/
 │   └── schema.py                     # Pydantic models for world state, the adaptation proposal,
 │                                       # and the availability-query response
 ├── frontend/
-│   ├── index.html                  # calendar (Day/Week/Month/Year/Range), Inject Change,
-│   │                                # availability query box, slot-picker modal
-│   ├── style.css
-│   └── app.js
+│   ├── index.html                  # calendar panel (Day/Week/Month/Year/Range) + the chat
+│   │                                # room; page orchestration lives in an inline <script>
+│   ├── app.js                       # render functions only: calendar views, proposal card,
+│   │                                 # inline slot picker, category color handling
+│   └── style.css
 └── data/
-    └── world_state.seed.json      # Alex's schedule/tasks/preferences -- the demo scenario
+    ├── world_state.seed.json      # Alex's schedule/tasks/preferences -- the demo scenario
+    ├── world_state.json           # gitignored working copy the demo mutates; /reset rebuilds it
+    └── usage_log.jsonl            # gitignored; one line of token usage per Bedrock call
 ```
 
 ---
 
 ## 7. Setup
 
+**Python 3.10 or newer is required.** `backend/schema.py` uses `X | None` annotations that Pydantic resolves at runtime, so 3.9 fails at import with `TypeError: unsupported operand type(s) for |`. Check `python3 --version` first — macOS system Python is still 3.9.
+
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate       # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
 uvicorn backend.main:app --reload
 ```
 
-Then open `frontend/index.html`. `detect_conflicts` and `score_option` need no AWS access at all and can be developed/tested entirely offline; only `/inject-change` (the actual reasoning step) needs Bedrock credentials.
+Then open `frontend/index.html`. Everything deterministic — `detect_conflicts`, `score_option`, `find_free_slots`, `apply_adaptation`, `log_feedback`, `categorize`, `classify_intent` — needs no AWS access at all and can be developed and tested entirely offline. Only the two agent loops (`/chat`, `/inject-change`, `/query`) call Bedrock.
 
 ---
 
 ## 8. Three-day plan
 
-| Day | Ship |
-|---|---|
-| **Fri 09-04 (today)** | `world_state.py` + seed data matching the exact pitch scenario. `detect_conflicts` and `score_option` — both fully testable offline, no AWS needed. Nail the numbers so the "good" option scores clearly better than a naive one. |
-| **Sat 09-05** | Wire the agent loop (Converse tool-use, Haiku) once Bedrock access is confirmed. **Goal: a real end-to-end run — inject the change, get a grounded proposal back — by tonight.** |
-| **Sun 09-06** | `apply_adaptation` with real tier enforcement, `log_feedback` for the Learn step, the frontend (Before/After view, WHY-expandable proposal card, Execute/Reject). Rehearse the demo script below. |
-| **Mon 09-07 (buffer / submission)** | Fix whatever the rehearsal exposed. Record the fallback video. Slides. Freeze code. Stretch only if there's real time left: a real Google Calendar read/write. |
+| Day | Ship | Status |
+|---|---|---|
+| **Fri 09-04** | `world_state.py` + seed data matching the exact pitch scenario. `detect_conflicts` and `score_option` — both fully testable offline, no AWS needed. Nail the numbers so the "good" option scores clearly better than a naive one. | ✅ done — and the numbers hold: 0.89 recommended vs. 0.72 naive (§9) |
+| **Sat 09-05 (today)** | Wire the agent loop (Converse tool-use, Haiku) once Bedrock access is confirmed. **Goal: a real end-to-end run — inject the change, get a grounded proposal back — by tonight.** | ⚠️ code written, **never executed** — see below |
+| **Sun 09-06** | `apply_adaptation` with real tier enforcement, `log_feedback` for the Learn step, the frontend (Before/After view, WHY-expandable proposal card, Execute/Reject). Rehearse the demo script below. | ✅ code done (also: calendar UI, availability agent, chat room, topic colors — pulled forward from the stretch list). Rehearsal not started |
+| **Mon 09-07 (buffer / submission)** | Fix whatever the rehearsal exposed. Record the fallback video. Slides. Freeze code. Stretch only if there's real time left: a real Google Calendar read/write. | ⬜ not started |
+
+> **The single biggest open risk: the Bedrock loop has never actually run.** There is no `.env`, no `data/usage_log.jsonl`, and no `data/world_state.json` in the working tree — all three appear the moment a real call succeeds. Every deterministic tool is verified, but `agent.py` and `query_agent.py` have only ever been read, not executed. Getting one real end-to-end `/chat` round-trip is worth more right now than any further feature, because it's the only thing standing between "the demo works" and "the demo works on stage."
+>
+> Separately, §1's `[cite: ...]` bracket is still unfilled — the weakest thing in the deck.
 
 ---
 
 ## 9. Output contract
 
+What `POST /chat` actually returns for the seed scenario. Every number below was produced by running the real tools against `data/world_state.seed.json` — not written by hand.
+
 ```json
 {
-  "change_summary": "Marketing assignment deadline moved from Friday to Tuesday",
-  "conflict": {
-    "task": "Marketing assignment",
-    "remaining_hours": 4.0,
-    "available_hours_before_new_due": 2.5,
-    "shortfall_hours": 1.5
-  },
-  "options": [
-    {
-      "id": "A",
-      "summary": "Move gym Mon->Tue, move project meeting Mon->Thu, block Mon 3-5pm to study",
-      "completion_probability": 0.87,
-      "actions": [
-        {"type": "block_study_time", "day": "Mon", "start": "15:00", "end": "17:00", "tier": "green"},
-        {"type": "move_event", "item": "Basketball", "to_day": "Tue", "to_start": "19:00", "tier": "yellow"},
-        {"type": "draft_message", "to": "project team", "tier": "yellow"}
-      ]
-    }
+  "kind": "adaptation",
+  "steps": [
+    {"tool": "detect_conflicts", "input": {"task_id": "task1", "new_due_day": "Tue"}, "result": {"...": "..."}},
+    {"tool": "score_option", "input": {"...": "..."}, "result": {"completion_probability": 0.89, "...": "..."}}
   ],
-  "recommended_option_id": "A",
-  "reasoning": "Option A closes the 1.5-hour shortfall without touching the Wednesday interview, and only moves basketball by one day rather than cancelling it.",
-  "investigation_steps": 4
+  "warnings": [],
+  "proposal": {
+    "change_summary": "Marketing assignment deadline moved from Friday to Tuesday",
+    "conflict": {
+      "task_id": "task1",
+      "task_title": "Marketing assignment",
+      "old_due_day": "Fri",
+      "new_due_day": "Tue",
+      "remaining_hours": 4.0,
+      "available_hours_before_new_due": 2.5,
+      "shortfall_hours": 1.5,
+      "movable_items_in_window": ["mtg1", "gym1"]
+    },
+    "options": [
+      {
+        "id": "A",
+        "summary": "Move the group meeting to Thu and basketball to Tue, then block Mon 15:00-19:00 to study",
+        "actions": [
+          {"type": "block_study_time", "day": "Mon", "start": "15:00", "end": "19:00", "tier": "green"},
+          {"type": "move_event", "item_id": "mtg1", "to_day": "Thu", "to_start": "14:00", "to_end": "15:00", "tier": "yellow"},
+          {"type": "move_event", "item_id": "gym1", "to_day": "Tue", "to_start": "19:00", "to_end": "20:30", "tier": "yellow"},
+          {"type": "draft_message", "recipient": "project team", "message": "Can we push Monday's meeting to Thursday? My marketing deadline moved up.", "tier": "yellow"}
+        ],
+        "completion_probability": 0.89,
+        "breakdown": "4.0h of 4.0h needed are covered before the deadline (5.0h available after proposed moves, +2.5h freed by them); -0.06 probability for moving a protected commitment"
+      },
+      {
+        "id": "B",
+        "summary": "Protect basketball — move only the group meeting, block Mon 15:00-18:00",
+        "actions": ["... move_event mtg1 -> Thu, block_study_time Mon 15:00-18:00 ..."],
+        "completion_probability": 0.84,
+        "breakdown": "3.0h of 4.0h needed are covered before the deadline (3.5h available after proposed moves, +1.0h freed by them)"
+      },
+      {
+        "id": "C",
+        "summary": "Change nothing else — just block Mon 15:00-17:00",
+        "actions": ["... block_study_time Mon 15:00-17:00 ..."],
+        "completion_probability": 0.72,
+        "breakdown": "2.0h of 4.0h needed are covered before the deadline (2.5h available after proposed moves, +0.0h freed by them)"
+      }
+    ],
+    "recommended_option_id": "A",
+    "reasoning": "Option A is the only one that fully covers the 4 hours still needed. B protects basketball but leaves an hour uncovered, which means the assignment plausibly doesn't get finished; A moves basketball by one day rather than cancelling it, which costs 0.06 of probability and no commitment. Neither option touches Wednesday's internship interview.",
+    "investigation_steps": 4
+  }
 }
 ```
+
+**Notes for anyone reading the numbers off this contract:**
+
+- **`item_id`, not `item`** — `move_event` addresses a schedule item by its id (`gym1`), which is why `_describe_state` feeds the ids to the model in the prompt.
+- **The model never submits a probability.** `propose_adaptation`'s schema has no field for one. The server re-runs `detect_conflicts` and `score_option` over the exact submitted actions in `agent._finalize` and attaches the results. A recommendation that doesn't match a submitted option is replaced and recorded in `warnings`.
+- **The spread is the point.** 0.89 recommended vs. 0.72 for the do-nothing-else baseline is a real gap produced by a real formula, and it holds up to "how did you calculate that": `0.5 + 0.45 x coverage - penalty`, where coverage is study hours booked over hours still required, capped at the hours actually free after the proposed moves.
+- **The deadline day itself is excluded** from the window — `window_days` is end-exclusive, so a Tuesday deadline gives you Monday only. That is deliberate and conservative; it's also why 4 hours of work has just 2.5 hours to land in.
 
 **The WHY is always the grounded numbers** (`remaining_hours`, `available_hours_before_new_due`, `completion_probability`) **plus which real tool produced them** — never a plain-language claim with nothing under it.
 
@@ -249,7 +309,24 @@ Then open `frontend/index.html`. `detect_conflicts` and `score_option` need no A
 
 ---
 
-## 11. Guidance for Claude Code
+## 11. Known limitations
+
+Disclosed on purpose — a judge who finds one of these before you mention it is worse than mentioning it first. None are hard to answer for; several are deliberate scope cuts.
+
+| # | Limitation | Where | Why it's acceptable / what it'd take |
+|---|---|---|---|
+| 1 | **The Bedrock loop has never been run.** The deterministic tools are verified; the two agent loops are code-reviewed only. | `agent.py`, `query_agent.py` | Not acceptable — this is the top priority (§8). Needs credentials and one real `/chat` round-trip. |
+| 2 | **A question mark routes to the availability agent.** "Did my deadline move to Tuesday?" is read as a query, not a change. Conversely a query with no `?` and no marker phrase ("tell me when I'm not busy") runs the full 8-turn adaptation loop. | `intent.py:15` | Deliberate: a zero-cost classifier beats an LLM round-trip per message. The demo script never phrases a change as a question. Cheap fix: require a marker rather than accept a bare `?`. |
+| 3 | **No collision checking when actions are applied.** A `block_study_time` or `move_event` can land on top of an existing item. | `apply_adaptation.py` | Real gap. `find_free_slots` already has the interval arithmetic — wiring it in is ~15 lines, worth doing if Sunday allows. |
+| 4 | **ID counters reset on server restart.** `_next_event_id` and `_next_id_counter` live in memory, so a restarted server re-issues `user1` / `study1` and can collide with ids already in `world_state.json`. | `main.py:97`, `apply_adaptation.py:3` | Only bites across a restart without a `/reset`. Deriving the next id from the loaded state closes it. |
+| 5 | **Keyword categorization mislabels context-dependent titles.** "Coffee with advisor" lands as `social`, not `academic`. | `categorize.py` | Deliberate: a context-aware label would cost a Bedrock round-trip per event created — not worth it for a color. |
+| 6 | **Two different notions of "free" coexist.** `daily_capacity_hours` (a conservative deep-work ceiling — Mon: 5.0h) and literal calendar gaps (Mon: 11.5h across four slots) legitimately disagree. | `capacity.py` vs. `find_free_slots.py` | Deliberate, documented in both files. Don't let anyone read one as a bug in the other — the availability answer and the deadline math measure different things on purpose. |
+| 7 | **Dead code in the frontend.** `submitQuery` and `injectChange` predate the chat room; nothing calls them now that everything routes through `/chat`. | `frontend/app.js` | Harmless, but delete before freezing the code. |
+| 8 | **A drafted message is never sent, and no real calendar is ever written.** "Act" means mutating `world_state.json` and displaying drafted text. | by design | This is the bounded-autonomy claim, not a shortcoming — but say it out loud rather than letting the demo imply otherwise. |
+
+---
+
+## 12. Guidance for Claude Code
 
 - **Keep `detect_conflicts` and `score_option` deterministic and dependency-free.** They're the credibility of the whole demo — an LLM-generated percentage would not survive a judge asking "how did you calculate that."
 - **Bound the agent loop** the same way as before: a hard iteration cap independent of the model's own judgement.
