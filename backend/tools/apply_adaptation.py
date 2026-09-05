@@ -1,17 +1,44 @@
+import re
+
 from backend.schema import ActionResult, AdaptationAction, ExecutionResult, ScheduleItem, WorldState
+from backend.time_utils import to_minutes
 
-_next_id_counter = [0]
+_ID_PATTERN = re.compile(r"^([a-zA-Z]+)(\d+)$")
 
 
-def _new_id(prefix: str) -> str:
-    _next_id_counter[0] += 1
-    return f"{prefix}{_next_id_counter[0]}"
+def _new_id(schedule: list[ScheduleItem], prefix: str) -> str:
+    """Derives the next id from ids already present in the schedule, rather than an in-memory
+    counter -- a counter resets to 0 on server restart and can reissue an id ("study1") that's
+    already sitting in world_state.json from a prior run."""
+    max_n = 0
+    for item in schedule:
+        match = _ID_PATTERN.match(item.id)
+        if match and match.group(1) == prefix:
+            max_n = max(max_n, int(match.group(2)))
+    return f"{prefix}{max_n + 1}"
+
+
+def _find_collision(day: str, start: str, end: str, schedule: list[ScheduleItem], exclude_id: str | None = None) -> ScheduleItem | None:
+    """First existing item that overlaps [start, end) on `day`, or None. Checked against the
+    schedule as it stands *at this point in the batch* -- if an earlier action in the same
+    request already moved something out of the way, that's reflected here since actions mutate
+    `state.schedule` in place as they're applied."""
+    start_m, end_m = to_minutes(start), to_minutes(end)
+    for item in schedule:
+        if item.id == exclude_id or item.day != day:
+            continue
+        item_start, item_end = to_minutes(item.start), to_minutes(item.end)
+        if start_m < item_end and item_start < end_m:
+            return item
+    return None
 
 
 def apply_adaptation(state: WorldState, actions: list[AdaptationAction]) -> ExecutionResult:
-    """Commits an approved plan to world state -- but only 🟢/🟡 actions. A 🔴 action is refused
-    here regardless of what the model proposed; this is the actual enforcement behind the
-    "bounded autonomy" claim, not just a prompt instruction."""
+    """Commits an approved plan to world state -- but only 🟢/🟡 actions, and only if they don't
+    land on top of something already there. A 🔴 action is refused regardless of what the model
+    proposed, and a colliding action is refused too, rather than silently double-booking a slot;
+    this is the actual enforcement behind the "bounded autonomy" claim, not just a prompt
+    instruction."""
     results = []
 
     for action in actions:
@@ -20,9 +47,20 @@ def apply_adaptation(state: WorldState, actions: list[AdaptationAction]) -> Exec
             continue
 
         if action.type == "block_study_time":
+            collision = _find_collision(action.day, action.start, action.end, state.schedule)
+            if collision:
+                results.append(
+                    ActionResult(
+                        action=action,
+                        applied=False,
+                        detail=f"Refused: {action.day} {action.start}-{action.end} overlaps with '{collision.title}'.",
+                    )
+                )
+                continue
+
             state.schedule.append(
                 ScheduleItem(
-                    id=_new_id("study"),
+                    id=_new_id(state.schedule, "study"),
                     day=action.day,
                     start=action.start,
                     end=action.end,
@@ -38,10 +76,23 @@ def apply_adaptation(state: WorldState, actions: list[AdaptationAction]) -> Exec
             if item is None:
                 results.append(ActionResult(action=action, applied=False, detail=f"Unknown schedule item '{action.item_id}'."))
                 continue
+
+            new_day = action.to_day or item.day
+            new_start = action.to_start or item.start
+            new_end = action.to_end or item.end
+            collision = _find_collision(new_day, new_start, new_end, state.schedule, exclude_id=item.id)
+            if collision:
+                results.append(
+                    ActionResult(
+                        action=action,
+                        applied=False,
+                        detail=f"Refused: moving '{item.title}' to {new_day} {new_start}-{new_end} overlaps with '{collision.title}'.",
+                    )
+                )
+                continue
+
             old_day, old_start = item.day, item.start
-            item.day = action.to_day or item.day
-            item.start = action.to_start or item.start
-            item.end = action.to_end or item.end
+            item.day, item.start, item.end = new_day, new_start, new_end
             results.append(
                 ActionResult(
                     action=action,

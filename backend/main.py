@@ -10,6 +10,7 @@ from backend.agent import run_adaptation  # noqa: E402
 from backend.intent import classify_intent  # noqa: E402
 from backend.query_agent import run_query  # noqa: E402
 from backend.schema import (  # noqa: E402
+    DAY_ORDER,
     ChatRequest,
     ExecuteRequest,
     FeedbackRequest,
@@ -18,7 +19,7 @@ from backend.schema import (  # noqa: E402
     ScheduleEventRequest,
     ScheduleItem,
 )
-from backend.tools.apply_adaptation import apply_adaptation  # noqa: E402
+from backend.tools.apply_adaptation import _new_id, apply_adaptation  # noqa: E402
 from backend.tools.log_feedback import log_feedback  # noqa: E402
 
 app = FastAPI(title="ADAPT")
@@ -94,16 +95,15 @@ def chat(req: ChatRequest) -> dict:
     return {"kind": "adaptation", **run_adaptation(req.message, state)}
 
 
-_next_event_id = [0]
-
-
 @app.post("/schedule-event")
 def schedule_event(req: ScheduleEventRequest) -> dict:
+    if req.day not in DAY_ORDER:
+        return {"error": f"'{req.day}' isn't a valid day; use one of {DAY_ORDER}"}
+
     state = world_state.load()
-    _next_event_id[0] += 1
     state.schedule.append(
         ScheduleItem(
-            id=f"user{_next_event_id[0]}",
+            id=_new_id(state.schedule, "user"),
             day=req.day,
             start=req.start,
             end=req.end,

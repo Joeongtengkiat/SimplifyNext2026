@@ -6,9 +6,6 @@ const MONTH_NAMES = [
 ];
 const STEP_LABEL = { detect_conflicts: "Checked schedule conflicts", score_option: "Scored a candidate plan", find_free_slots: "Checked free time" };
 
-let currentProposal = null;
-let currentQueryResponse = null;
-
 // ---------------------------------------------------------------------------------------------
 // The seed data only knows "Mon".."Sun" (day-of-week labels, no real dates) -- to show a real
 // Day/Month/Year calendar we anchor those labels to the current real-world week. This is
@@ -66,16 +63,6 @@ async function resetState() {
   return (await fetch(`${API_BASE}/reset`, { method: "POST" })).json();
 }
 
-async function injectChange(changeText) {
-  const resp = await fetch(`${API_BASE}/inject-change`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ change_text: changeText }),
-  });
-  if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
-  return resp.json();
-}
-
 async function executeOption(optionId, proposal) {
   const resp = await fetch(`${API_BASE}/execute`, {
     method: "POST",
@@ -92,16 +79,6 @@ async function sendFeedback(optionId, approved, proposal) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ option_id: optionId, approved, proposal }),
   });
-}
-
-async function submitQuery(queryText) {
-  const resp = await fetch(`${API_BASE}/query`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query_text: queryText }),
-  });
-  if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
-  return resp.json();
 }
 
 async function scheduleEvent(day, start, end, title, type) {
@@ -288,7 +265,6 @@ function describeAction(a) {
 }
 
 function renderProposal(container, proposal, { onExecuted } = {}) {
-  currentProposal = proposal;
   const c = proposal.conflict;
 
   const conflictHtml = c
@@ -366,7 +342,6 @@ function renderProposal(container, proposal, { onExecuted } = {}) {
 // ---------------------------------------------------------------------------------------------
 
 function renderSlotPicker(container, queryResponse, { onScheduled } = {}) {
-  currentQueryResponse = queryResponse;
   const slots = queryResponse.free_slots;
 
   const slotCards = slots
