@@ -218,11 +218,11 @@ Then open `frontend/index.html`. Everything deterministic — `detect_conflicts`
 | Day | Ship | Status |
 |---|---|---|
 | **Fri 09-04** | `world_state.py` + seed data matching the exact pitch scenario. `detect_conflicts` and `score_option` — both fully testable offline, no AWS needed. Nail the numbers so the "good" option scores clearly better than a naive one. | ✅ done — and the numbers hold: 0.89 recommended vs. 0.72 naive (§9) |
-| **Sat 09-05 (today)** | Wire the agent loop (Converse tool-use, Haiku) once Bedrock access is confirmed. **Goal: a real end-to-end run — inject the change, get a grounded proposal back — by tonight.** | ⚠️ code written, **never executed** — see below |
+| **Sat 09-05 (today)** | Wire the agent loop (Converse tool-use, Haiku) once Bedrock access is confirmed. **Goal: a real end-to-end run — inject the change, get a grounded proposal back — by tonight.** | ✅ **done.** First real `/chat` round-trip succeeded — see §9a. |
 | **Sun 09-06** | `apply_adaptation` with real tier enforcement, `log_feedback` for the Learn step, the frontend (Before/After view, WHY-expandable proposal card, Execute/Reject). Rehearse the demo script below. | ✅ code done (also: calendar UI, availability agent, chat room, topic colors — pulled forward from the stretch list). Rehearsal not started |
 | **Mon 09-07 (buffer / submission)** | Fix whatever the rehearsal exposed. Record the fallback video. Slides. Freeze code. Stretch only if there's real time left: a real Google Calendar read/write. | ⬜ not started |
 
-> **The single biggest open risk: the Bedrock loop has never actually run.** There is no `.env`, no `data/usage_log.jsonl`, and no `data/world_state.json` in the working tree — all three appear the moment a real call succeeds. Every deterministic tool is verified, but `agent.py` and `query_agent.py` have only ever been read, not executed. Getting one real end-to-end `/chat` round-trip is worth more right now than any further feature, because it's the only thing standing between "the demo works" and "the demo works on stage."
+> **Resolved 2026-09-05: the Bedrock loop has now actually run.** First attempt failed with `ValidationException: The provided model identifier is invalid` — the fallback id in `bedrock.py` (`us.anthropic.claude-haiku-4-5-v1:0`) was missing the release-date segment. Querying the account directly (`boto3` `list_inference_profiles`) found the real id: `us.anthropic.claude-haiku-4-5-20251001-v1:0`. Fixed in `.env`, `.env.example`, and the code fallback. A real `/chat` call then returned a fully grounded proposal — see §9a for what actually came back, including a genuinely different (and reasonable) strategy than the one scripted in §10.
 >
 > Separately, §1's `[cite: ...]` bracket is still unfilled — the weakest thing in the deck.
 
@@ -298,6 +298,26 @@ What `POST /chat` actually returns for the seed scenario. Every number below was
 
 ---
 
+## 9a. What actually came back from the first real run
+
+The §9 contract above is illustrative — it shows the shape and cites real numbers from running the tools directly. This section is different: it's the literal response from the first real `/chat` call against live Claude Haiku 4.5, same seed scenario, same input text ("Marketing assignment deadline moved from Friday to Tuesday").
+
+Worth knowing before rehearsing from this: **the model did not reproduce the scripted plan.** It never moved basketball. Instead it found three different strategies, all respecting `protected_basketball`:
+
+- **Option A (72%):** move the group meeting to Wednesday, study Monday evening (after basketball) and briefly Tuesday morning.
+- **Option B (72%):** don't move anything — draft a message asking the instructor for a Wednesday extension, study both evenings.
+- **Option C (89%, recommended):** move the group meeting to Wednesday, study 4 hours across Monday and Tuesday, notify the group.
+
+That's not a malfunction — `protected_basketball: 0.8` is *supposed* to make the model reluctant to touch it, and finding an alternative that still hits a high completion probability is arguably a better demo of "adapts *with* you" than blindly executing the pre-written plan would be.
+
+**But the model's own written `reasoning` doesn't match its own numbers, and that's a real finding.** Its explanation for picking C says: *"...better than Option A (72%, lower score) or Option B (89%, same score but relies on instructor flexibility you can't control)."* Option B's actual, grounded `completion_probability` — the one `score_option` returned and the one sitting in the same JSON response — is **0.72**, not 0.89. The free-text `reasoning` field misstated a number that the structured `options[]` array right next to it has correct. `agent._finalize` grounds every *number* in the response (§9's notes), but nothing checks whether the prose *describing* those numbers agrees with them — that gap is real, not previously known, and worth a fix: either regenerate `reasoning` server-side from the final grounded options instead of trusting the model's own turn of prose, or at minimum a cheap post-hoc check that flags when the reasoning text's cited percentages don't match the option they're attached to.
+
+Three Bedrock calls, ~10.4K tokens total (`data/usage_log.jsonl`): one for `detect_conflicts`, one turn that called `score_option` three times **in parallel** (good loop discipline — it evaluated all three candidates in one round-trip rather than three), and one for `propose_adaptation`. No `warnings` were raised — the existing grounding checks (recommended option matches a submitted one, no evidence citing an uncalled tool) genuinely have nothing to catch here, since they don't parse the prose.
+
+**Implication for the demo script (§10):** rehearse against what the model *actually does*, and **read the reasoning text out loud before trusting it in front of judges** — run it a few times and check the cited numbers against the options array each time, since this isn't guaranteed to reproduce and isn't guaranteed to be caught.
+
+---
+
 ## 10. The demo script (from the original pitch, kept close to what was scripted)
 
 1. **Hook:** "Your life changed 30 seconds ago." Show the Before schedule.
@@ -315,7 +335,7 @@ Disclosed on purpose — a judge who finds one of these before you mention it is
 
 | # | Limitation | Where | Status |
 |---|---|---|---|
-| 1 | **The Bedrock loop has never been run.** The deterministic tools are verified; the two agent loops are code-reviewed only. | `agent.py`, `query_agent.py` | ⚠️ **Still open — blocked on AWS access, not code.** Top priority (§8). Needs the Bedrock model-access check confirmed, credentials in `.env`, and one real `/chat` round-trip. |
+| 1 | ~~The Bedrock loop has never been run.~~ | `agent.py`, `query_agent.py` | ✅ **Resolved 2026-09-05.** Fixed an invalid model id in the process (see §8, §9a) — the real `/chat` round-trip now works. |
 | 2 | **A question mark routes to the availability agent.** "Did my deadline move to Tuesday?" is read as a query, not a change. Conversely a query with no `?` and no marker phrase ("tell me when I'm not busy") runs the full 8-turn adaptation loop. | `intent.py` | Deliberate: a zero-cost classifier beats an LLM round-trip per message. The demo script never phrases a change as a question. |
 | 3 | ~~No collision checking when actions are applied.~~ | `apply_adaptation.py` | ✅ **Fixed.** `_find_collision` checks every `block_study_time`/`move_event` against the schedule as it stands at that point in the batch (so an earlier move in the same request correctly frees the slot a later action claims) and refuses on overlap instead of double-booking. Verified: refuses a block on top of the Monday lecture, refuses a move onto the Wednesday interview, and correctly allows reusing a slot freed earlier in the same batch. |
 | 4 | ~~ID counters reset on server restart.~~ | `main.py`, `apply_adaptation.py` | ✅ **Fixed.** Both now derive the next id from ids already present in the loaded schedule (`_new_id`, shared between the two call sites) instead of an in-memory counter. Verified end-to-end: restarting the server mid-session and adding another event correctly continues the sequence (`user3`) rather than colliding. |
@@ -323,6 +343,7 @@ Disclosed on purpose — a judge who finds one of these before you mention it is
 | 6 | **Two different notions of "free" coexist.** `daily_capacity_hours` (a conservative deep-work ceiling — Mon: 5.0h) and literal calendar gaps (Mon: 11.5h across four slots) legitimately disagree. | `capacity.py` vs. `find_free_slots.py` | Deliberate, documented in both files. Don't let anyone read one as a bug in the other — the availability answer and the deadline math measure different things on purpose. |
 | 7 | ~~Dead code in the frontend.~~ | `frontend/app.js` | ✅ **Fixed.** Removed `submitQuery`, `injectChange`, and the unused `currentProposal`/`currentQueryResponse` module state — none of it was reachable once `/chat` became the only entry point. |
 | 8 | **A drafted message is never sent, and no real calendar is ever written.** "Act" means mutating `world_state.json` and displaying drafted text. | by design | This is the bounded-autonomy claim, not a shortcoming — but say it out loud rather than letting the demo imply otherwise. |
+| 9 | **The model's free-text `reasoning` isn't checked against its own numbers.** Found on the very first real run: it described Option B as "89%, same score" as the recommended option, when B's actual grounded `completion_probability` was 0.72. Every *number in the options array* is recomputed authoritatively (§9's notes); nothing validates that the prose describing them agrees. | `agent.py::_finalize`, `agent.py::run_adaptation` | **Open, newly found — not hypothetical.** Cheapest fix: don't trust model-written reasoning that cites a percentage; either regenerate it server-side from the final grounded options, or add a post-hoc check that flags (or strips) reasoning text whose cited numbers don't match the option it's attached to. Same category of risk the whole grounding-by-construction design was built to avoid, and it slipped through in the one field that was never a structured, re-derivable value. |
 
 **New, minor:** `/schedule-event` now rejects a `day` outside `Mon`.."Sun" with a clear error instead of silently creating an item no calendar view will ever show.
 

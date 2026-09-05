@@ -6,7 +6,9 @@ from pathlib import Path
 import boto3
 from botocore.config import Config
 
-MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-v1:0")
+# verified 2026-09 against this account's list_inference_profiles -- the id is missing the
+# "-20251001" release-date segment without it, which Bedrock rejects with ValidationException
+MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 USAGE_LOG = Path(__file__).resolve().parent.parent / "data" / "usage_log.jsonl"
