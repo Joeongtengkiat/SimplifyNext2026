@@ -1,6 +1,5 @@
+import re
 from typing import Callable
-
-from pydantic import ValidationError
 
 from backend.bedrock import converse, get_client
 from backend.schema import AdaptationAction, AdaptationOption, AdaptationProposal, WorldState
@@ -8,6 +7,38 @@ from backend.tools.detect_conflicts import detect_conflicts
 from backend.tools.score_option import score_option
 
 MAX_TURNS = 8
+
+# best-effort check for §11 limitation #9: the model's free-text `reasoning` isn't a structured,
+# re-derivable value like the numbers in `options[]`, so nothing guarantees it agrees with them.
+# This catches the literal "Option X (NN%...)" pattern the first real run actually produced, plus
+# any bare percentage that doesn't match ANY option's real score -- it does not catch a claim
+# phrased without a digit ("about the same"), so treat this as risk reduction, not a guarantee.
+_OPTION_PERCENT_PATTERN = re.compile(r"\b([A-Za-z][A-Za-z0-9_]*)\s*\(\s*(\d{1,3})\s*%")
+_BARE_PERCENT_PATTERN = re.compile(r"\b(\d{1,3})\s*%")
+
+
+def _check_reasoning_grounding(reasoning: str, options: list[AdaptationOption]) -> list[str]:
+    warnings: list[str] = []
+    actual_pct = {opt.id: round(opt.completion_probability * 100) for opt in options}
+
+    for match in _OPTION_PERCENT_PATTERN.finditer(reasoning):
+        option_id, claimed = match.group(1), int(match.group(2))
+        if option_id in actual_pct and actual_pct[option_id] != claimed:
+            warnings.append(
+                f"Reasoning cites {claimed}% for option {option_id}, but its actual computed "
+                f"score is {actual_pct[option_id]}% -- treat the written explanation with caution."
+            )
+
+    known_percentages = set(actual_pct.values())
+    for match in _BARE_PERCENT_PATTERN.finditer(reasoning):
+        claimed = int(match.group(1))
+        if claimed not in known_percentages:
+            warnings.append(
+                f"Reasoning mentions {claimed}%, which doesn't match any option's actual computed "
+                f"score ({sorted(known_percentages)}) -- possibly an invented number."
+            )
+
+    return warnings
 
 SYSTEM_PROMPT = """You are ADAPT: you help a person replan when something in their schedule \
 changes, without ever silently acting on their behalf.
@@ -31,7 +62,12 @@ a deadline moved). Your job:
    -- e.g. a slightly lower-scoring option that protects something the person clearly cares about \
    may be the better recommendation. Explain the trade-off in your reasoning, grounded only in \
    what the tools actually returned.
-6. Finish by calling propose_adaptation. Never answer in plain text.
+6. In your reasoning, do NOT restate exact percentages (e.g. "72%", "89%") -- each option's real \
+   score is already shown next to it, so repeating a number from memory only risks getting it \
+   wrong. Refer to options by id and describe the trade-off qualitatively instead: what's \
+   protected, what's controllable versus dependent on someone else, what's fully covered versus \
+   partially covered.
+7. Finish by calling propose_adaptation. Never answer in plain text.
 """
 
 _ACTION_SCHEMA = {
@@ -122,7 +158,15 @@ TOOL_CONFIG = {
                                 },
                             },
                             "recommended_option_id": {"type": "string"},
-                            "reasoning": {"type": "string"},
+                            "reasoning": {
+                                "type": "string",
+                                "description": (
+                                    "Plain-language explanation of the trade-off. Do not restate exact "
+                                    "percentages -- refer to options by id and describe what's protected, "
+                                    "controllable, or fully vs. partially covered instead. Scores are "
+                                    "already shown separately and don't need to be repeated here."
+                                ),
+                            },
                         },
                         "required": ["change_summary", "task_id", "new_due_day", "options", "recommended_option_id", "reasoning"],
                     }
@@ -195,6 +239,8 @@ def _finalize(raw_input: dict, state: WorldState, steps: list[dict]) -> dict:
         else:
             recommended_id = raw_input["recommended_option_id"]
 
+        warnings.extend(_check_reasoning_grounding(raw_input["reasoning"], options))
+
         proposal = AdaptationProposal(
             change_summary=raw_input["change_summary"],
             conflict=conflict,
@@ -203,8 +249,13 @@ def _finalize(raw_input: dict, state: WorldState, steps: list[dict]) -> dict:
             reasoning=raw_input["reasoning"],
             investigation_steps=len(steps),
         )
-    except (ValidationError, KeyError, IndexError) as e:
-        warnings.append(f"propose_adaptation output failed validation: {e}")
+    except Exception as e:
+        # the model's output only ever *hints* at this schema (Bedrock doesn't hard-enforce it
+        # the way Anthropic's own strict tool use does) -- a malformed options[] entry (e.g. a
+        # bare string instead of {id, summary, actions}) raises TypeError, not just the
+        # KeyError/ValidationError this used to be narrowed to. Anything going wrong while
+        # parsing the model's own output should degrade to this fallback, never crash the request.
+        warnings.append(f"propose_adaptation output failed validation: {type(e).__name__}: {e}")
         proposal = AdaptationProposal(
             change_summary=raw_input.get("change_summary", "(unparseable)"),
             conflict=detect_conflicts(state, state.tasks[0].id, state.today) if state.tasks else None,
