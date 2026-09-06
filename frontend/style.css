@@ -29,30 +29,9 @@ body {
 }
 
 .container {
-  max-width: 1120px;
+  max-width: 860px;
   margin: 0 auto;
   padding: 0 24px;
-}
-
-.app-layout {
-  display: grid;
-  grid-template-columns: 380px 1fr;
-  gap: 22px;
-  align-items: start;
-}
-
-.calendar-col {
-  position: sticky;
-  top: 20px;
-}
-
-@media (max-width: 900px) {
-  .app-layout {
-    grid-template-columns: 1fr;
-  }
-  .calendar-col {
-    position: static;
-  }
 }
 
 .banner {
@@ -102,7 +81,6 @@ header h1 {
 }
 
 .chat-card {
-  min-height: 560px;
   display: flex;
   flex-direction: column;
 }
@@ -547,6 +525,51 @@ button.secondary {
   background: var(--red);
 }
 
+/* custom range view: one compact row per day with anything on it */
+
+.range-day-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.range-day-row:last-child {
+  border-bottom: none;
+}
+
+.range-day-label {
+  flex-shrink: 0;
+  width: 88px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--brand);
+  padding-top: 4px;
+}
+
+.range-day-events {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+
+.range-event-chip {
+  background: #f8f9fc;
+  border: 1px solid var(--border);
+  border-left: 3px solid #ccc;
+  border-radius: 5px;
+  padding: 3px 9px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.range-event-chip b {
+  font-variant-numeric: tabular-nums;
+  margin-right: 4px;
+}
+
 /* week view */
 
 .week-grid {
@@ -677,8 +700,7 @@ button.secondary {
 /* ---- chat room ---- */
 
 #chat-thread {
-  flex: 1;
-  max-height: 560px;
+  max-height: 340px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;

@@ -277,19 +277,31 @@ function renderYearView(container, state, year) {
 function renderRangeView(container, state, startDate, endDate) {
   const days = [];
   const cursor = new Date(startDate);
-  while (cursor <= endDate && days.length < 31) {
+  while (cursor <= endDate && days.length < 400) {
     days.push(new Date(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
+
+  // one compact row per day *that actually has something on it* -- a long range with a light
+  // schedule should read as a short summary, not a page of "Nothing scheduled" repeated
   const rows = days
     .map((d) => {
       const items = itemsForDate(state, d);
-      return `<div class="day-group"><div class="day-label">${fmtDate(d)}</div>${
-        items.length ? items.map(itemBlockHtml).join("") : '<div class="empty-note">Nothing scheduled.</div>'
-      }</div>`;
+      if (!items.length) return "";
+      const chips = items
+        .map((item) => {
+          const color = categoryColor(item.category || "other");
+          return `<span class="range-event-chip" style="border-left-color: ${color}"><b>${item.start}</b> ${item.title}</span>`;
+        })
+        .join("");
+      return `<div class="range-day-row">
+        <div class="range-day-label">${fmtDate(d)}</div>
+        <div class="range-day-events">${chips}</div>
+      </div>`;
     })
     .join("");
-  container.innerHTML = rows || '<div class="empty-note">Pick a valid range.</div>';
+
+  container.innerHTML = rows || '<div class="empty-note">Nothing scheduled in this range.</div>';
 }
 
 // ---------------------------------------------------------------------------------------------
