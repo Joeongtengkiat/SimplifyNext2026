@@ -17,7 +17,7 @@ This replaces the earlier PhishTrace concept (a phishing-investigation agent) �
 | **Budget** | Bar shows $30 but **access is revoked at $20**. At $30 the account is **terminated**. |
 | **Leases** | One per team, no second lease granted. Approval takes **up to 2 working days**. |
 | **Region** | `us-east-1` only. |
-| **Credentials** | Access keys **expire every 12 hours**. |
+| **Credentials** | Documented as 12 hours, but **observed far shorter** — see §7. Treat them as minutes, not hours. |
 | **Banned by cost** | OpenSearch, SageMaker real-time endpoints, NAT Gateway, ALB/NLB, EC2/RDS, Bedrock Provisioned Throughput. |
 | **Encouraged** | Bedrock (on-demand), Lambda, DynamoDB on-demand, S3. |
 
@@ -210,6 +210,29 @@ uvicorn backend.main:app --reload
 ```
 
 Then open `frontend/index.html`. Everything deterministic — `detect_conflicts`, `score_option`, `find_free_slots`, `apply_adaptation`, `log_feedback`, `categorize`, `classify_intent` — needs no AWS access at all and can be developed and tested entirely offline. Only the two agent loops (`/chat`, `/inject-change`, `/query`) call Bedrock.
+
+### Credentials expire much faster than the brief implies
+
+The hackathon brief says 12 hours. Measured against two real credential sets on 2026-09-07:
+
+| Set | Pasted into `.env` | Worked from | Worked until | Outcome |
+|---|---|---|---|---|
+| 1 | 09-06 17:02 | — | — | `ExpiredTokenException` on the very first call; never worked |
+| 2 | 09-07 02:17 | 02:17:36 | 02:31:07 | dead by 02:35 — **13.5 minutes of confirmed use** |
+
+**The clock starts when the credential is issued, not when you paste it.** Set 1 was already dead on arrival, which means most of its life had elapsed before it reached the file. So the usable window is however much is left when you paste — it is never the full TTL, and we have no way to read the real TTL back (the session token is opaque, and `aws sts get-caller-identity` needs credentials that already work).
+
+The working rule:
+
+```bash
+# fetch → paste → restart → call, back to back. Every idle minute is off your window.
+lsof -ti:8000 | xargs kill          # load_dotenv() runs once at import —
+uvicorn backend.main:app --reload   # editing .env alone changes NOTHING
+curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
+  -d '{"message":"Which days am I free?"}'
+```
+
+If that last call returns 500, check the server log: `ExpiredTokenException` means refresh again, and anything else is a real bug. Keep the lease portal open during the demo — the whole refresh cycle is about 30 seconds once you are set up for it.
 
 ---
 
