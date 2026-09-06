@@ -233,20 +233,34 @@ def _finalize(raw_input: dict, state: WorldState, steps: list[dict]) -> dict:
                 )
             )
 
-        if raw_input["recommended_option_id"] not in {o.id for o in options}:
+        if raw_input.get("recommended_option_id") not in {o.id for o in options}:
             warnings.append("recommended_option_id didn't match any submitted option; defaulting to the first")
             recommended_id = options[0].id if options else ""
         else:
             recommended_id = raw_input["recommended_option_id"]
 
-        warnings.extend(_check_reasoning_grounding(raw_input["reasoning"], options))
+        # `reasoning` and `change_summary` are prose, not evidence -- the options and the
+        # conflict are what the proposal is actually for. Bedrock doesn't hard-enforce the
+        # tool schema, so the model does sometimes omit them; discarding a fully scored set
+        # of options over a missing sentence is the worst possible trade.
+        reasoning = (raw_input.get("reasoning") or "").strip()
+        if not reasoning:
+            warnings.append("model omitted 'reasoning'; options and numbers are unaffected")
+            reasoning = "The agent did not explain this choice. The numbers below are still computed from the proposed actions."
+        else:
+            warnings.extend(_check_reasoning_grounding(reasoning, options))
+
+        change_summary = (raw_input.get("change_summary") or "").strip()
+        if not change_summary:
+            warnings.append("model omitted 'change_summary'")
+            change_summary = "Schedule change"
 
         proposal = AdaptationProposal(
-            change_summary=raw_input["change_summary"],
+            change_summary=change_summary,
             conflict=conflict,
             options=options,
             recommended_option_id=recommended_id,
-            reasoning=raw_input["reasoning"],
+            reasoning=reasoning,
             investigation_steps=len(steps),
         )
     except Exception as e:
