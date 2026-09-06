@@ -46,6 +46,16 @@ changes, without ever silently acting on their behalf.
 You are given the person's current schedule, tasks, and preferences, plus a change event (e.g. \
 a deadline moved). Your job:
 
+0. You can only track changes to a task that's actually in the given task list, and you can \
+   only place things on Mon/Tue/Wed/Thu/Fri/Sat/Sun of the single week you're shown -- you have \
+   no real calendar and cannot resolve an absolute date (e.g. "September 30th") to a day of \
+   that week, and you cannot create a brand-new task that doesn't already exist. If the change \
+   refers to a task not in the list, or a date/day you cannot place in Mon-Sun, DO NOT guess or \
+   substitute a different existing task just to have something to show -- that produces a \
+   confident-looking answer about the wrong thing, which is worse than admitting the gap. \
+   Instead call propose_adaptation with task_id set to an empty string, an empty options list, \
+   and use reasoning to say plainly what you couldn't resolve and why (e.g. "I can only track \
+   the Marketing assignment right now, and I can't place September 30th within this week").
 1. Identify which task the change refers to and its new due day (must be one of Mon/Tue/Wed/\
    Thu/Fri/Sat/Sun).
 2. Call detect_conflicts to find out how big a problem this actually is -- remaining work versus \
@@ -143,7 +153,15 @@ TOOL_CONFIG = {
                         "type": "object",
                         "properties": {
                             "change_summary": {"type": "string"},
-                            "task_id": {"type": "string"},
+                            "task_id": {
+                                "type": "string",
+                                "description": (
+                                    "Must match an id from the given task list. Leave as an empty "
+                                    "string if the change doesn't refer to any task you were given, "
+                                    "or names a date/day you can't place in Mon-Sun -- never "
+                                    "substitute a different existing task."
+                                ),
+                            },
                             "new_due_day": {"type": "string"},
                             "options": {
                                 "type": "array",
@@ -217,6 +235,24 @@ def _finalize(raw_input: dict, state: WorldState, steps: list[dict]) -> dict:
     warnings: list[str] = []
     try:
         task_id, new_due_day = raw_input["task_id"], raw_input["new_due_day"]
+
+        if not task_id or not any(t.id == task_id for t in state.tasks):
+            # the model correctly declined rather than fabricating a conflict against an
+            # unrelated existing task -- surface its own explanation as-is, don't synthesize a
+            # fake conflict just to fill the field (see the exception fallback below, which used
+            # to make exactly that mistake)
+            proposal = AdaptationProposal(
+                change_summary=raw_input.get("change_summary", ""),
+                conflict=None,
+                options=[],
+                recommended_option_id="",
+                reasoning=raw_input.get(
+                    "reasoning", "This doesn't match a task or day currently tracked."
+                ),
+                investigation_steps=len(steps),
+            )
+            return {"steps": steps, "proposal": proposal.model_dump(), "warnings": warnings}
+
         conflict = detect_conflicts(state, task_id, new_due_day)
 
         options = []
@@ -258,7 +294,8 @@ def _finalize(raw_input: dict, state: WorldState, steps: list[dict]) -> dict:
         warnings.append(f"propose_adaptation output failed validation: {type(e).__name__}: {e}")
         proposal = AdaptationProposal(
             change_summary=raw_input.get("change_summary", "(unparseable)"),
-            conflict=detect_conflicts(state, state.tasks[0].id, state.today) if state.tasks else None,
+            conflict=None,  # never fabricate a conflict against an arbitrary task just to fill
+            # the field -- an honest "couldn't validate" beats a plausible-looking wrong one
             options=[],
             recommended_option_id="",
             reasoning="The agent's proposal could not be validated; review manually.",

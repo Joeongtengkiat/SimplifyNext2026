@@ -79,7 +79,9 @@ class AdaptationOption(BaseModel):
 
 class AdaptationProposal(BaseModel):
     change_summary: str
-    conflict: ConflictReport
+    conflict: ConflictReport | None = None  # None when the agent can't match a real task/day --
+    # see agent.py's "decline honestly" path, rather than fabricating a conflict against an
+    # unrelated task just to have something to show
     options: list[AdaptationOption]
     recommended_option_id: str
     reasoning: str

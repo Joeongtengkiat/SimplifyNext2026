@@ -384,6 +384,29 @@ button.secondary {
   margin-bottom: 14px;
 }
 
+.decline-card {
+  background: var(--yellow-bg);
+  border: 1px solid var(--yellow-border, #fde68a);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.decline-head {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--yellow);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.decline-card p {
+  font-size: 12.5px;
+  margin: 0;
+  color: var(--text);
+}
+
 /* ---- calendar view toggle ---- */
 
 .view-toggle {

@@ -324,6 +324,19 @@ function describeAction(a) {
 function renderProposal(container, proposal, { onExecuted } = {}) {
   const c = proposal.conflict;
 
+  if (!c && proposal.options.length === 0) {
+    // the agent correctly declined rather than fabricating a plan against an unrelated task --
+    // give this its own clear visual treatment so it reads as an intentional answer, not a
+    // broken/empty card
+    container.innerHTML = `
+      <div class="decline-card">
+        <div class="decline-head"><span>🤷</span> Couldn't process that</div>
+        <p>${proposal.reasoning}</p>
+      </div>
+    `;
+    return;
+  }
+
   const conflictHtml = c
     ? `<div class="conflict-summary">
         <div class="stat"><span class="num">${c.remaining_hours}h</span>needed</div>

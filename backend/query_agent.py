@@ -1,7 +1,5 @@
 from typing import Callable
 
-from pydantic import ValidationError
-
 from backend.bedrock import converse, get_client
 from backend.schema import QueryResponse, RecommendedSlot, WorldState
 from backend.tools.find_free_slots import find_free_slots
@@ -135,8 +133,11 @@ def _finalize(raw_input: dict, state: WorldState, steps: list[dict]) -> dict:
             recommended_slot=recommended,
             investigation_steps=len(steps),
         )
-    except (ValidationError, KeyError) as e:
-        warnings.append(f"answer_query output failed validation: {e}")
+    except Exception as e:
+        # same lesson as agent.py's _finalize: a narrow except clause misses real failure modes
+        # (e.g. ValueError from an invalid day string) -- degrade gracefully on anything, never
+        # crash the request over the model's own malformed output
+        warnings.append(f"answer_query output failed validation: {type(e).__name__}: {e}")
         response = QueryResponse(
             interpreted_start_day=state.today,
             interpreted_end_day="Sun",
@@ -147,6 +148,39 @@ def _finalize(raw_input: dict, state: WorldState, steps: list[dict]) -> dict:
         )
 
     return {"steps": steps, "query_response": response.model_dump(), "warnings": warnings}
+
+
+def _force_conclusion(client, messages: list[dict], state: WorldState, steps: list[dict]) -> dict:
+    """Mirrors agent.py's _force_conclusion -- without this, a message the model doesn't call a
+    tool for at all (e.g. gibberish, or a message it can't parse as a question) fell straight
+    through to a generic "didn't reach an answer" with no attempt at an honest explanation."""
+    messages.append(
+        {
+            "role": "user",
+            "content": [
+                {
+                    "text": "You must conclude now. Call answer_query with your best understanding, "
+                    "or an honest explanation of what you couldn't interpret, based on what you've "
+                    "found so far."
+                }
+            ],
+        }
+    )
+    try:
+        response = converse(
+            client, messages, SYSTEM_PROMPT, TOOL_CONFIG, tool_choice={"tool": {"name": "answer_query"}}
+        )
+        for block in response["output"]["message"]["content"]:
+            if block.get("toolUse", {}).get("name") == "answer_query":
+                return _finalize(block["toolUse"]["input"], state, steps)
+    except Exception:
+        pass
+
+    return {
+        "steps": steps,
+        "query_response": None,
+        "warnings": ["Forced conclusion failed; no answer could be generated."],
+    }
 
 
 def run_query(query_text: str, state: WorldState, on_step: Callable[[dict], None] | None = None) -> dict:
@@ -184,8 +218,4 @@ def run_query(query_text: str, state: WorldState, on_step: Callable[[dict], None
 
         messages.append({"role": "user", "content": tool_result_blocks})
 
-    return {
-        "steps": steps,
-        "query_response": None,
-        "warnings": ["The agent didn't reach an answer within the turn limit."],
-    }
+    return _force_conclusion(client, messages, state, steps)
