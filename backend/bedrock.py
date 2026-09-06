@@ -15,7 +15,12 @@ USAGE_LOG = Path(__file__).resolve().parent.parent / "data" / "usage_log.jsonl"
 
 
 def get_client():
-    return boto3.client("bedrock-runtime", region_name=REGION, config=Config(retries={"max_attempts": 3}))
+    # explicit bounds -- botocore's defaults (60s connect, 60s read, 3 retries) can chain into a
+    # multi-minute hang on a stuck connection, which is indistinguishable from the app "freezing"
+    # to whoever's watching the spinner. This still allows a genuinely slow multi-tool-call turn
+    # to finish, just not an unbounded one.
+    config = Config(retries={"max_attempts": 2}, connect_timeout=10, read_timeout=45)
+    return boto3.client("bedrock-runtime", region_name=REGION, config=config)
 
 
 def converse(

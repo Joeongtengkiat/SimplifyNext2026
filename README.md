@@ -349,6 +349,8 @@ Disclosed on purpose — a judge who finds one of these before you mention it is
 
 **New, minor:** `/schedule-event` now rejects a `day` outside `Mon`.."Sun" with a clear error instead of silently creating an item no calendar view will ever show.
 
+| 10 | ~~A direct scheduling request ("allocate the whole day Thursday for a friend meetup") routed to the adaptation agent and fabricated a nonsensical deadline conflict, since that's the only thing that agent's prompt understands.~~ Reported as "the backend freezing" — the misrouted call wasn't actually hung (13s, HTTP 200), it just produced a wrong, confusing answer that read as broken. | `intent.py`, `query_agent.py` | ✅ **Fixed.** Added scheduling-request markers ("allocate", "block out", "set aside", ...) to the query-agent router, and taught `query_agent`'s prompt to treat "the whole day" as the largest free slot that day, not a single hour. Verified live: the same request now correctly routes to the query agent and returns Thu 07:00-23:00 as the recommended slot in 5.4s. Also added explicit connect/read timeouts to the Bedrock client (`bedrock.py`) — botocore's defaults could chain into a multi-minute hang on a stuck connection, indistinguishable from a real freeze, even though that wasn't what happened here. |
+
 ---
 
 ## 12. Guidance for Claude Code
