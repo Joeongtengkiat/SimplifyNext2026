@@ -6,12 +6,13 @@ from backend.time_utils import to_minutes
 _ID_PATTERN = re.compile(r"^([a-zA-Z]+)(\d+)$")
 
 
-def _new_id(schedule: list[ScheduleItem], prefix: str) -> str:
-    """Derives the next id from ids already present in the schedule, rather than an in-memory
-    counter -- a counter resets to 0 on server restart and can reissue an id ("study1") that's
-    already sitting in world_state.json from a prior run."""
+def _new_id(items: list, prefix: str) -> str:
+    """Derives the next id from ids already present in the list (schedule items or tasks --
+    anything with a plain `.id` string), rather than an in-memory counter -- a counter resets to
+    0 on server restart and can reissue an id ("study1") that's already sitting in
+    world_state.json from a prior run."""
     max_n = 0
-    for item in schedule:
+    for item in items:
         match = _ID_PATTERN.match(item.id)
         if match and match.group(1) == prefix:
             max_n = max(max_n, int(match.group(2)))

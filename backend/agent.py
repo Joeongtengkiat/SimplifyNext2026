@@ -1,8 +1,10 @@
 import re
 from typing import Callable
 
+from backend import world_state
 from backend.bedrock import converse, get_client
 from backend.schema import AdaptationAction, AdaptationOption, AdaptationProposal, WorldState
+from backend.tools.create_task import create_task
 from backend.tools.detect_conflicts import detect_conflicts
 from backend.tools.score_option import score_option
 
@@ -46,16 +48,20 @@ changes, without ever silently acting on their behalf.
 You are given the person's current schedule, tasks, and preferences, plus a change event (e.g. \
 a deadline moved). Your job:
 
-0. You can only track changes to a task that's actually in the given task list, and you can \
-   only place things on Mon/Tue/Wed/Thu/Fri/Sat/Sun of the single week you're shown -- you have \
-   no real calendar and cannot resolve an absolute date (e.g. "September 30th") to a day of \
-   that week, and you cannot create a brand-new task that doesn't already exist. If the change \
-   refers to a task not in the list, or a date/day you cannot place in Mon-Sun, DO NOT guess or \
-   substitute a different existing task just to have something to show -- that produces a \
-   confident-looking answer about the wrong thing, which is worse than admitting the gap. \
-   Instead call propose_adaptation with task_id set to an empty string, an empty options list, \
-   and use reasoning to say plainly what you couldn't resolve and why (e.g. "I can only track \
-   the Marketing assignment right now, and I can't place September 30th within this week").
+0. If the change describes a genuinely new commitment that isn't in the given task list, but \
+   names (or clearly implies) a day you CAN place on Mon/Tue/Wed/Thu/Fri/Sat/Sun, call \
+   create_task first to record it -- a short clear title, that due day, your best estimate of \
+   hours_required if the person didn't say one (state that assumption plainly in \
+   change_summary, e.g. "assumed 3h of prep since none was specified" -- never hide a guess), \
+   and priority (default medium if unstated). Never ask the person for a task id -- you assign \
+   that yourself when you call the tool. Then continue the normal flow below using the id \
+   create_task returns. You still have no real calendar and cannot resolve an absolute date \
+   (e.g. "September 30th") to a day of this single-week view -- if you can't place the change \
+   on Mon-Sun at all, DO NOT guess or substitute a different existing task just to have \
+   something to show -- that produces a confident-looking answer about the wrong thing, which is \
+   worse than admitting the gap. Instead call propose_adaptation with task_id set to an empty \
+   string, an empty options list, and use reasoning to say plainly what you couldn't resolve and \
+   why (e.g. "I can't place September 30th within this week -- which day of the week is that?").
 1. Identify which task the change refers to and its new due day (must be one of Mon/Tue/Wed/\
    Thu/Fri/Sat/Sun).
 2. Call detect_conflicts to find out how big a problem this actually is -- remaining work versus \
@@ -100,6 +106,34 @@ _ACTION_SCHEMA = {
 
 TOOL_CONFIG = {
     "tools": [
+        {
+            "toolSpec": {
+                "name": "create_task",
+                "description": (
+                    "Records a genuinely new commitment that isn't in the given task list yet -- "
+                    "e.g. a test or assignment the person just mentioned. Commits immediately "
+                    "(this is capturing a fact, not acting on the calendar), and returns the new "
+                    "task's id so you can use it in detect_conflicts/score_option/propose_adaptation "
+                    "right after. Calling it twice for the same title+due_day is safe -- it just "
+                    "returns the existing task instead of creating a duplicate."
+                ),
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "due_day": {"type": "string", "enum": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]},
+                            "hours_required": {
+                                "type": "number",
+                                "description": "Omit if the person didn't say -- a default estimate will be assumed and flagged.",
+                            },
+                            "priority": {"type": "string", "enum": ["low", "medium", "high"]},
+                        },
+                        "required": ["title", "due_day"],
+                    }
+                },
+            }
+        },
         {
             "toolSpec": {
                 "name": "detect_conflicts",
@@ -213,7 +247,19 @@ def _describe_state(state: WorldState) -> str:
 
 def _call_tool(name: str, tool_input: dict, state: WorldState, on_step: Callable[[dict], None] | None) -> dict:
     try:
-        if name == "detect_conflicts":
+        if name == "create_task":
+            task, note = create_task(
+                state,
+                title=tool_input["title"],
+                due_day=tool_input["due_day"],
+                hours_required=tool_input.get("hours_required"),
+                priority=tool_input.get("priority", "medium"),
+            )
+            world_state.save(state)  # commit immediately -- recording a fact, not acting on the
+            # calendar, so unlike block_study_time/move_event this doesn't wait for an Execute
+            # click on a proposed option
+            result = {"task": task.model_dump(), "note": note}
+        elif name == "detect_conflicts":
             result = detect_conflicts(state, tool_input["task_id"], tool_input["new_due_day"]).model_dump()
         elif name == "score_option":
             actions = [AdaptationAction(**a) for a in tool_input["actions"]]

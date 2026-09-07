@@ -56,6 +56,7 @@ know that's not just an LLM sounding confident."
 
 **Adaptation loop (the centerpiece)**
 - Natural-language change detection ("deadline moved from Friday to Tuesday")
+- New-task creation from chat ("I have a test on Thursday") — records it, assumes a labeled default for anything unstated (e.g. hours needed), then plans around it like any tracked task
 - Deterministic conflict detection (remaining hours vs. available hours before deadline)
 - 2–3 generated candidate plans, each scored by a real completion-probability formula
 - WHY button — expandable, shows the actual grounded math
