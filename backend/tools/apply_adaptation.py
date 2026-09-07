@@ -80,6 +80,20 @@ def apply_adaptation(state: WorldState, actions: list[AdaptationAction]) -> Exec
             new_day = action.to_day or item.day
             new_start = action.to_start or item.start
             new_end = action.to_end or item.end
+
+            if new_day == item.day and new_start == item.start and new_end == item.end:
+                # re-running an already-applied move (e.g. a double-clicked Execute) is a no-op,
+                # not a fresh success -- say so plainly instead of reporting a "move" to the exact
+                # spot it's already at
+                results.append(
+                    ActionResult(
+                        action=action,
+                        applied=True,
+                        detail=f"'{item.title}' is already at {item.day} {item.start}-{item.end}; no change needed.",
+                    )
+                )
+                continue
+
             collision = _find_collision(new_day, new_start, new_end, state.schedule, exclude_id=item.id)
             if collision:
                 results.append(
